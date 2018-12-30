@@ -1,3 +1,4 @@
+import os
 
 import numpy as np
 import torch
@@ -49,18 +50,28 @@ class ProjectionHelper():
         bbox_max = np.maximum(bbox_max0, bbox_max1)
         return bbox_min, bbox_max
 
-
-    # TODO make runnable on cpu as well...
     def compute_projection(self, depth, camera_to_world, world_to_grid):
         # compute projection by voxels -> image
         world_to_camera = torch.inverse(camera_to_world)
         grid_to_world = torch.inverse(world_to_grid)
         voxel_bounds_min, voxel_bounds_max = self.compute_frustum_bounds(world_to_grid, camera_to_world)
-        voxel_bounds_min = np.maximum(voxel_bounds_min, 0).cuda()
-        voxel_bounds_max = np.minimum(voxel_bounds_max, self.volume_dims).float().cuda()
 
-        # coordinates within frustum bounds
-        lin_ind_volume = torch.arange(0, self.volume_dims[0]*self.volume_dims[1]*self.volume_dims[2], out=torch.LongTensor()).cuda()
+        CUDA_AVAILABLE = os.environ['CUDA_VISIBLE_DEVICES']
+        if CUDA_AVAILABLE:
+            voxel_bounds_min = np.maximum(voxel_bounds_min, 0).cuda()
+            voxel_bounds_max = np.minimum(voxel_bounds_max, self.volume_dims).float().cuda()
+
+            # coordinates within frustum bounds
+            lin_ind_volume = torch.arange(0, self.volume_dims[0]*self.volume_dims[1]*self.volume_dims[2],
+                                          out=torch.LongTensor()).cuda()
+        else:
+            voxel_bounds_min = np.maximum(voxel_bounds_min, 0)
+            voxel_bounds_max = np.minimum(voxel_bounds_max, self.volume_dims).float()
+
+            # coordinates within frustum bounds
+            lin_ind_volume = torch.arange(0, self.volume_dims[0] * self.volume_dims[1] * self.volume_dims[2],
+                                          out=torch.LongTensor())
+
         coords = camera_to_world.new(4, lin_ind_volume.size(0))
         coords[2] = lin_ind_volume / (self.volume_dims[0]*self.volume_dims[1])
         tmp = lin_ind_volume - (coords[2]*self.volume_dims[0]*self.volume_dims[1]).long()

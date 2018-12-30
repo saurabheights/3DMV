@@ -51,14 +51,17 @@ assert opt.model2d_type in ENET_TYPES
 print(opt)
 
 # specify gpu
-os.environ['CUDA_VISIBLE_DEVICES']=str(opt.gpu)
+# os.environ['CUDA_VISIBLE_DEVICES']=str(opt.gpu)
+CUDA_AVAILABLE = os.environ['CUDA_VISIBLE_DEVICES']
 
 # create camera intrinsics
 input_image_dims = [328, 256]
 proj_image_dims = [41, 32]
 intrinsic = util.make_intrinsic(opt.fx, opt.fy, opt.mx, opt.my)
 intrinsic = util.adjust_intrinsic(intrinsic, [opt.intrinsic_image_width, opt.intrinsic_image_height], proj_image_dims)
-intrinsic = intrinsic.cuda()
+if CUDA_AVAILABLE:
+    intrinsic = intrinsic.cuda()
+
 grid_dims = [opt.grid_dimX, opt.grid_dimY, opt.grid_dimZ]
 column_height = opt.grid_dimZ
 num_images = opt.num_nearest_images
@@ -88,14 +91,17 @@ model.load_state_dict(torch.load(opt.model_path))
 print(model)
 
 # move to gpu
-model = model.cuda()
-model.eval()
-model2d_fixed = model2d_fixed.cuda()
-model2d_fixed.eval()
-model2d_trainable = model2d_trainable.cuda()
-model2d_trainable.eval()
-#model2d_classifier = model2d_classifier.cuda()
-#model2d_classifier.eval()
+if CUDA_AVAILABLE:
+    model = model.cuda()
+    model.eval()
+    model2d_fixed = model2d_fixed.cuda()
+    model2d_fixed.eval()
+    model2d_trainable = model2d_trainable.cuda()
+    model2d_trainable.eval()
+else:
+    model.eval()
+    model2d_fixed.eval()
+    model2d_trainable.eval()
 
 # data files
 scenes = util.read_lines_from_file(opt.scene_list)
@@ -151,11 +157,19 @@ def test(scene_name, eval_file):
     scene_occ_sz = scene_occ.shape[1:]
     depth_images, color_images, poses, frame_ids, world_to_grids = data_util.load_scene_image_info_multi(scene_image_file, scene_name, opt.data_path_2d, proj_image_dims, input_image_dims, num_classes, color_mean, color_std)
 
-    input_occ = torch.cuda.FloatTensor(1, 2, grid_dims[2], grid_dims[1], grid_dims[0])
-    depth_image = torch.cuda.FloatTensor(num_images, proj_image_dims[1], proj_image_dims[0])
-    color_image = torch.cuda.FloatTensor(num_images, 3, input_image_dims[1], input_image_dims[0])
-    world_to_grid = torch.cuda.FloatTensor(num_images, 4, 4)
-    pose = torch.cuda.FloatTensor(num_images, 4, 4)
+    if CUDA_AVAILABLE:
+        input_occ = torch.cuda.FloatTensor(1, 2, grid_dims[2], grid_dims[1], grid_dims[0])
+        depth_image = torch.cuda.FloatTensor(num_images, proj_image_dims[1], proj_image_dims[0])
+        color_image = torch.cuda.FloatTensor(num_images, 3, input_image_dims[1], input_image_dims[0])
+        world_to_grid = torch.cuda.FloatTensor(num_images, 4, 4)
+        pose = torch.cuda.FloatTensor(num_images, 4, 4)
+    else:
+        input_occ = torch.FloatTensor(1, 2, grid_dims[2], grid_dims[1], grid_dims[0])
+        depth_image = torch.FloatTensor(num_images, proj_image_dims[1], proj_image_dims[0])
+        color_image = torch.FloatTensor(num_images, 3, input_image_dims[1], input_image_dims[0])
+        world_to_grid = torch.FloatTensor(num_images, 4, 4)
+        pose = torch.FloatTensor(num_images, 4, 4)
+
     output_probs = np.zeros([num_classes, scene_occ_sz[0], scene_occ_sz[1], scene_occ_sz[2]])
     # make sure nonsingular
     for k in range(num_images):

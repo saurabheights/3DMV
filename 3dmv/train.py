@@ -58,14 +58,16 @@ assert opt.model2d_type in ENET_TYPES
 print(opt)
 
 # specify gpu
-os.environ['CUDA_VISIBLE_DEVICES']=str(opt.gpu)
+# os.environ['CUDA_VISIBLE_DEVICES']=str(opt.gpu)
+CUDA_AVAILABLE = os.environ['CUDA_VISIBLE_DEVICES']
 
 # create camera intrinsics
 input_image_dims = [328, 256]
 proj_image_dims = [41, 32]
 intrinsic = util.make_intrinsic(opt.fx, opt.fy, opt.mx, opt.my)
 intrinsic = util.adjust_intrinsic(intrinsic, [opt.intrinsic_image_width, opt.intrinsic_image_height], proj_image_dims)
-intrinsic = intrinsic.cuda()
+if CUDA_AVAILABLE:
+    intrinsic = intrinsic.cuda()
 grid_dims = [opt.grid_dimX, opt.grid_dimY, opt.grid_dimZ]
 column_height = opt.grid_dimZ
 batch_size = opt.batch_size
@@ -89,16 +91,23 @@ for c in range(num_classes):
         criterion_weights[c] = 1 / np.log(1.2 + criterion_weights[c])
 print(criterion_weights.numpy())
 #raw_input('')
-criterion = torch.nn.CrossEntropyLoss(criterion_weights).cuda()
-criterion2d = torch.nn.CrossEntropyLoss(criterion_weights).cuda()
+if CUDA_AVAILABLE:
+    criterion = torch.nn.CrossEntropyLoss(criterion_weights).cuda()
+    criterion2d = torch.nn.CrossEntropyLoss(criterion_weights).cuda()
+else:
+    criterion = torch.nn.CrossEntropyLoss(criterion_weights)
+    criterion2d = torch.nn.CrossEntropyLoss(criterion_weights)
 
 # move to gpu
-model2d_fixed = model2d_fixed.cuda()
-model2d_fixed.eval()
-model2d_trainable = model2d_trainable.cuda()
-model2d_classifier = model2d_classifier.cuda()
-model = model.cuda()
-criterion = criterion.cuda()
+if CUDA_AVAILABLE:
+    model2d_fixed = model2d_fixed.cuda()
+    model2d_fixed.eval()
+    model2d_trainable = model2d_trainable.cuda()
+    model2d_classifier = model2d_classifier.cuda()
+    model = model.cuda()
+    criterion = criterion.cuda()
+else:
+    model2d_fixed.eval()
 
 optimizer = torch.optim.SGD(model.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay)
 optimizer2d = torch.optim.SGD(model2d_trainable.parameters(), lr=opt.lr, momentum=opt.momentum, weight_decay=opt.weight_decay)
@@ -139,14 +148,24 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
     # remove last mini-batch so that all the batches have equal size
     indices = indices[:-1]
 
-    mask = torch.cuda.LongTensor(batch_size*column_height)
-    depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
-    color_images = torch.cuda.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
-    camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
-    label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+    if CUDA_AVAILABLE:
+        mask = torch.cuda.LongTensor(batch_size*column_height)
+        depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+        color_images = torch.cuda.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
+        camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
+        label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+    else:
+        mask = torch.LongTensor(batch_size * column_height)
+        depth_images = torch.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+        color_images = torch.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
+        camera_poses = torch.FloatTensor(batch_size * num_images, 4, 4)
+        label_images = torch.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
 
     for t,v in enumerate(indices):
-        targets = torch.autograd.Variable(labels[v].cuda())
+        if CUDA_AVAILABLE:
+            targets = torch.autograd.Variable(labels[v].cuda())
+        else:
+            targets = torch.autograd.Variable(labels[v])
         # valid targets
         mask = targets.view(-1).data.clone()
         for k in range(num_classes):
@@ -156,7 +175,10 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
         if len(maskindices.shape) == 0:
             continue
         transforms = world_to_grids[v].unsqueeze(1)
-        transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4).cuda()
+        if CUDA_AVAILABLE:
+            transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4).cuda()
+        else:
+            transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4)
         data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images, camera_poses, color_mean, color_std)
 
         # compute projection mapping
@@ -185,7 +207,11 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
             ft2d = ft2d.permute(0, 2, 3, 1).contiguous()
 
         # 2d/3d
-        input3d = torch.autograd.Variable(volumes[v].cuda())
+        if CUDA_AVAILABLE:
+            input3d = torch.autograd.Variable(volumes[v].cuda())
+        else:
+            input3d = torch.autograd.Variable(volumes[v])
+
         output = model(input3d, imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d), grid_dims)
 
         loss = criterion(output.view(-1, num_classes), targets.view(-1))
@@ -263,14 +289,24 @@ def test(epoch, iter, log_file, val_file, log_file_2d):
     indices = indices[:-1]
 
     with torch.no_grad():
-        mask = torch.cuda.LongTensor(batch_size*column_height)
-        depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
-        color_images = torch.cuda.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
-        camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
-        label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+        if CUDA_AVAILABLE:
+            mask = torch.cuda.LongTensor(batch_size*column_height)
+            depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+            color_images = torch.cuda.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
+            camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
+            label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+        else:
+            mask = torch.LongTensor(batch_size*column_height)
+            depth_images = torch.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+            color_images = torch.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
+            camera_poses = torch.FloatTensor(batch_size * num_images, 4, 4)
+            label_images = torch.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
 
         for t,v in enumerate(indices):
-            targets = labels[v].cuda()
+            if CUDA_AVAILABLE:
+                targets = labels[v].cuda()
+            else:
+                targets = labels[v]
             # valid targets
             mask = targets.view(-1).data.clone()
             for k in range(num_classes):
@@ -281,7 +317,11 @@ def test(epoch, iter, log_file, val_file, log_file_2d):
                 continue
 
             transforms = world_to_grids[v].unsqueeze(1)
-            transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4).cuda()
+            if CUDA_AVAILABLE:
+                transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4).cuda()
+            else:
+                transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4)
+
             # get 2d data
             data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images, camera_poses, color_mean, color_std)
             if opt.use_proxy_loss:
@@ -310,7 +350,10 @@ def test(epoch, iter, log_file, val_file, log_file_2d):
                 ft2d = ft2d.permute(0, 2, 3, 1).contiguous()
 
             # 2d/3d
-            input3d = volumes[v].cuda()
+            if CUDA_AVAILABLE:
+                input3d = volumes[v].cuda()
+            else:
+                input3d = volumes[v]
             output = model(input3d, imageft, proj_ind_3d, proj_ind_2d, grid_dims)
             loss = criterion(output.view(-1, num_classes), targets.view(-1))
             test_loss.append(loss.item())
