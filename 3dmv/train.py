@@ -87,7 +87,7 @@ if opt.class_weight_file:
 for c in range(num_classes):
     if criterion_weights[c] > 0:
         criterion_weights[c] = 1 / np.log(1.2 + criterion_weights[c])
-print criterion_weights.numpy()
+print(criterion_weights.numpy())
 #raw_input('')
 criterion = torch.nn.CrossEntropyLoss(criterion_weights).cuda()
 criterion2d = torch.nn.CrossEntropyLoss(criterion_weights).cuda()
@@ -108,8 +108,8 @@ if opt.use_proxy_loss:
 # data files
 train_files = util.read_lines_from_file(opt.train_data_list)
 val_files = [] if not opt.val_data_list else util.read_lines_from_file(opt.val_data_list)
-print '#train files = ', len(train_files)
-print '#val files = ', len(val_files)
+print('#train files = %d' % (len(train_files)))
+print('#val files = %d' % (len(val_files)))
 
 _SPLITTER = ','
 confusion = tnt.meter.ConfusionMeter(num_classes)
@@ -164,7 +164,7 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
         if None in proj_mapping: #invalid sample
             #print '(invalid sample)'
             continue
-        proj_mapping = zip(*proj_mapping)
+        proj_mapping = list(zip(*proj_mapping))
         proj_ind_3d = torch.stack(proj_mapping[0])
         proj_ind_2d = torch.stack(proj_mapping[1])
 
@@ -213,7 +213,7 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
 
         # confusion
         y = output.data
-        y = y.view(y.nelement()/y.size(2), num_classes)[:, :-1]
+        y = y.view(int(y.nelement()/y.size(2)), num_classes)[:, :-1]
         _, predictions = y.max(1)
         predictions = predictions.view(-1)
         k = targets.data.view(-1)
@@ -298,15 +298,17 @@ def test(epoch, iter, log_file, val_file, log_file_2d):
             if None in proj_mapping: #invalid sample
                 #print '(invalid sample)'
                 continue
-            proj_mapping = zip(*proj_mapping)
+            proj_mapping = list(zip(*proj_mapping))
             proj_ind_3d = torch.stack(proj_mapping[0])
             proj_ind_2d = torch.stack(proj_mapping[1])
+
             # 2d
             imageft_fixed = model2d_fixed(color_images)
             imageft = model2d_trainable(imageft_fixed)
             if opt.use_proxy_loss:
                 ft2d = model2d_classifier(imageft)
                 ft2d = ft2d.permute(0, 2, 3, 1).contiguous()
+
             # 2d/3d
             input3d = volumes[v].cuda()
             output = model(input3d, imageft, proj_ind_3d, proj_ind_2d, grid_dims)
@@ -379,7 +381,7 @@ def main():
             log_file_2d_val.write(_SPLITTER.join(['epoch','iter','loss','avg acc', 'instance acc', 'time']) + '\n')
             log_file_2d_val.flush()
     # start training
-    print 'starting training...'
+    print('starting training...')
     iter = 0
     num_files_per_val = 10
     for epoch in range(opt.max_epoch):

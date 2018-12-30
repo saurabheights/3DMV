@@ -85,7 +85,8 @@ model2d_trainable.load_state_dict(torch.load(model2dt_path))
 #    model2d_classifier.load_state_dict(torch.load(model2dc_path))
 model = Model2d3d(num_classes, num_images, intrinsic, proj_image_dims, grid_dims, opt.depth_min, opt.depth_max, opt.voxel_size)
 model.load_state_dict(torch.load(opt.model_path))
-print model
+print(model)
+
 # move to gpu
 model = model.cuda()
 model.eval()
@@ -98,12 +99,11 @@ model2d_trainable.eval()
 
 # data files
 scenes = util.read_lines_from_file(opt.scene_list)
-print '#scenes = ', len(scenes)
+print('#scenes = %d' % (len(scenes)))
 if opt.has_gt:
     print('evaluating test scenes')
 else:
     print('running model over test scenes (no evaluation)')
-
 
 _SPLITTER = ','
 def evaluate_prediction(scene_occ, scene_label, output):
@@ -127,21 +127,21 @@ def evaluate_prediction(scene_occ, scene_label, output):
             class_num_correct[c] = class_num_occ[c] - num_wrong
         class_num_union[c] = np.count_nonzero(np.logical_or(mask, np.logical_and(np.not_equal(scene_label, num_classes-1), np.equal(output, c))))
 
-    print 'instance acc = ', float(inst_num_correct)/float(inst_num_occ)
+    print('instance acc = %f' % (float(inst_num_correct) / float(inst_num_occ)))
     class_acc = np.divide(class_num_correct, class_num_occ)
     class_iou = np.divide(class_num_correct, class_num_union)
-    print 'class_acc', np.nanmean(class_acc), class_acc
-    print 'class_iou', np.nanmean(class_iou), class_iou
+    print('class_acc %f %f' % (np.nanmean(class_acc), class_acc))
+    print('class_iou %f %f' % (np.nanmean(class_iou), class_iou))
     return {'instance_num_correct':inst_num_correct, 'instance_num_total':inst_num_occ,'class_num_correct':class_num_correct, 'class_num_total':class_num_occ, 'class_num_union': class_num_union}
 
 
 def test(scene_name, eval_file):
-    print 'scene', scene_name
+    print('scene %s' % (scene_name))
     scene_file = os.path.join(opt.data_path_3d, scene_name + '.sdf.ann')
     scene_image_file = os.path.join(opt.data_path_3d, scene_name + '.image')
     if not os.path.exists(scene_file) or not os.path.exists(scene_image_file):
-        print scene_file, os.path.exists(scene_file)
-        print scene_image_file, os.path.exists(scene_image_file)
+        print(scene_file, os.path.exists(scene_file))
+        print(scene_image_file, os.path.exists(scene_image_file))
         raise
     scene_occ, scene_label = data_util.load_scene(scene_file, num_classes, opt.has_gt)
     if scene_occ.shape[1] > column_height:

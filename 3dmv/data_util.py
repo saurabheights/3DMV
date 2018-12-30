@@ -10,7 +10,7 @@ import util
 import gc
 
 def load_hdf5_data(filename, num_classes):
-    print filename
+    print(filename)
     assert os.path.isfile(filename)
     gc.collect()
 
