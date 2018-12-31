@@ -19,6 +19,7 @@ ENET_TYPES = {'scannet': (41, [0.496342, 0.466664, 0.440796], [0.277856, 0.28623
 parser = argparse.ArgumentParser()
 # data paths
 parser.add_argument('--train_data_list', required=True, help='path to file list of h5 train data')
+parser.add_argument('--train_data_list_rootdir', required=True, help='path to root dir of paths in h5 train data filelist')
 parser.add_argument('--val_data_list', default='', help='path to file list of h5 val data')
 parser.add_argument('--output', default='./logs', help='folder to output model checkpoints')
 parser.add_argument('--data_path_2d', required=True, help='path to 2d train data')
@@ -116,7 +117,9 @@ if opt.use_proxy_loss:
 
 # data files
 train_files = util.read_lines_from_file(opt.train_data_list)
-val_files = [] if not opt.val_data_list else util.read_lines_from_file(opt.val_data_list)
+train_files = [os.path.join(opt.train_data_list_rootdir, x) for x in train_files]  # Append root path to each filename
+val_files = [] if not opt.val_data_list else util.read_lines_from_file(opt.val_data_list)  # ToDo: Saurabh: Set validation data
+val_files = [os.path.join(opt.train_data_list_rootdir, x) for x in val_files]  # Append root path to each filename
 print('#train files = %d' % (len(train_files)))
 print('#val files = %d' % (len(val_files)))
 
