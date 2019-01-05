@@ -111,15 +111,54 @@ def load_label_frames(data_path, frame_indices, label_images, num_classes):
         label_images[k] = load_label_frame(label_files[k], image_dims, num_classes)
 
 
+global_dir_2d_checked=False
+available_scene_ids=[]
+
+
+def check_2d_dataset_dir(data_path):
+    global available_scene_ids
+    available_scene_ids = [x for x in os.listdir(data_path) if os.path.isdir(os.path.join(data_path, x))]
+
+
+def are_all_scenes_2d_files_available(data_path, scan_names):
+    global global_dir_2d_checked
+    if not global_dir_2d_checked:
+        check_2d_dataset_dir(data_path)
+        global_dir_2d_checked = True
+
+    global available_scene_ids
+    for scan_name in scan_names:
+        if scan_name not in available_scene_ids:
+            return False
+
+    return True
+
+
 def load_frames_multi(data_path, frame_indices, depth_images, color_images, poses, color_mean, color_std):
     # construct files
     num_images = frame_indices.shape[1] - 2
     scan_names = ['scene' + str(scene_id).zfill(4) + '_' + str(scan_id).zfill(2) for scene_id, scan_id in frame_indices[:,:2].numpy()]
+
+    if not are_all_scenes_2d_files_available(data_path, scan_names):
+        print('Skipping scenes(no such directory) %s' % ','.join(scan_names))
+        return False
+
     scan_names = np.repeat(scan_names, num_images)
     frame_ids = frame_indices[:, 2:].contiguous().view(-1).numpy()
+
     depth_files = [os.path.join(data_path, scan_name, 'depth', str(frame_id) + '.png') for scan_name, frame_id in zip(scan_names, frame_ids)]
     color_files = [os.path.join(data_path, scan_name, 'color', str(frame_id) + '.jpg') for scan_name, frame_id in zip(scan_names, frame_ids)]
     pose_files = [os.path.join(data_path, scan_name, 'pose', str(frame_id) + '.txt') for scan_name, frame_id in zip(scan_names, frame_ids)]
+
+    all_files_on_disk = True
+    all_files = depth_files+color_files+pose_files
+    for f in all_files:
+        if not os.path.isfile(f):
+            print('Did not found file: %s' % f)
+            all_files_on_disk = False
+
+    if not all_files_on_disk:
+        return all_files_on_disk
 
     batch_size = frame_indices.size(0) * num_images
     depth_image_dims = [depth_images.shape[2], depth_images.shape[1]]
@@ -131,6 +170,8 @@ def load_frames_multi(data_path, frame_indices, depth_images, color_images, pose
         color_images[k] = color_image
         depth_images[k] = torch.from_numpy(depth_image)
         poses[k] = pose
+
+    return True
 
 
 def load_scene_image_info_multi(filename, scene_name, image_path, depth_image_dims, color_image_dims, num_classes, color_mean, color_std):

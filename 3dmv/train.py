@@ -182,7 +182,10 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
             transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4).cuda()
         else:
             transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4)
-        data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images, camera_poses, color_mean, color_std)
+
+        is_load_success = data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images, camera_poses, color_mean, color_std)
+        if not is_load_success:
+            continue
 
         # compute projection mapping
         proj_mapping = [projection.compute_projection(d, c, t) for d, c, t in zip(depth_images, camera_poses, transforms)]
