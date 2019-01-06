@@ -134,6 +134,7 @@ def are_all_scenes_2d_files_available(data_path, scan_names):
     global available_scene_ids
     for scan_name in scan_names:
         if scan_name not in available_scene_ids:
+            print('Skipping scenes(no such directory) %s' % scan_name)
             return False
 
     return True
@@ -145,7 +146,6 @@ def load_frames_multi(data_path, frame_indices, depth_images, color_images, pose
     scan_names = ['scene' + str(scene_id).zfill(4) + '_' + str(scan_id).zfill(2) for scene_id, scan_id in frame_indices[:,:2].numpy()]
 
     if not are_all_scenes_2d_files_available(data_path, scan_names):
-        print('Skipping scenes(no such directory) %s' % ','.join(scan_names))
         return False
 
     scan_names = np.repeat(scan_names, num_images)
