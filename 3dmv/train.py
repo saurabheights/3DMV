@@ -139,131 +139,143 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
     if opt.use_proxy_loss:
         model2d_classifier.train()
 
-    volumes, labels, frames, world_to_grids = data_util.load_hdf5_data(train_file, num_classes)
-    frames = frames[:, :2+num_images]
-    volumes = volumes.permute(0, 1, 4, 3, 2)
-    labels = labels.permute(0, 1, 4, 3, 2)
+    # h5py has too much data. 10000 samples are too much to use. Divide by 10 and pick 1000 at a time
+    for h5py_index in range(10):
+        volumes, labels, frames, world_to_grids = data_util.load_hdf5_data(train_file, num_classes, h5py_index)
+        frames = frames[:, :2+num_images]
+        volumes = volumes.permute(0, 1, 4, 3, 2)
+        labels = labels.permute(0, 1, 4, 3, 2)
 
-    labels = labels[:, 0, :, grid_centerX, grid_centerY]  # center columns as targets
-    num_samples = volumes.shape[0]
-    # shuffle
-    indices = torch.randperm(num_samples).long().split(batch_size)
-    # remove last mini-batch so that all the batches have equal size
-    indices = indices[:-1]
+        labels = labels[:, 0, :, grid_centerX, grid_centerY]  # center columns as targets
+        num_samples = volumes.shape[0]
+        # shuffle
+        indices = torch.randperm(num_samples).long().split(batch_size)
+        # remove last mini-batch so that all the batches have equal size
+        indices = indices[:-1]
 
-    if CUDA_AVAILABLE:
-        mask = torch.cuda.LongTensor(batch_size*column_height)
-        depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
-        color_images = torch.cuda.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
-        camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
-        label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
-    else:
-        mask = torch.LongTensor(batch_size * column_height)
-        depth_images = torch.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
-        color_images = torch.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
-        camera_poses = torch.FloatTensor(batch_size * num_images, 4, 4)
-        label_images = torch.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
-
-    for t,v in enumerate(indices):
         if CUDA_AVAILABLE:
-            targets = torch.autograd.Variable(labels[v].cuda())
+            mask = torch.cuda.LongTensor(batch_size*column_height)
+            depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+            color_images = torch.cuda.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
+            camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
+            label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
         else:
-            targets = torch.autograd.Variable(labels[v])
-        # valid targets
-        mask = targets.view(-1).data.clone()
-        for k in range(num_classes):
-            if criterion_weights[k] == 0:
-                mask[mask.eq(k)] = 0
-        maskindices = mask.nonzero().squeeze()
-        if len(maskindices.shape) == 0:
-            continue
-        transforms = world_to_grids[v].unsqueeze(1)
-        if CUDA_AVAILABLE:
-            transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4).cuda()
-        else:
-            transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4)
+            mask = torch.LongTensor(batch_size * column_height)
+            depth_images = torch.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+            color_images = torch.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
+            camera_poses = torch.FloatTensor(batch_size * num_images, 4, 4)
+            label_images = torch.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
 
-        is_load_success = data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images, camera_poses, color_mean, color_std)
-        if not is_load_success:
-            continue
-
-        # compute projection mapping
-        proj_mapping = [projection.compute_projection(d, c, t) for d, c, t in zip(depth_images, camera_poses, transforms)]
-        if None in proj_mapping: #invalid sample
-            #print '(invalid sample)'
-            continue
-        proj_mapping = list(zip(*proj_mapping))
-        proj_ind_3d = torch.stack(proj_mapping[0])
-        proj_ind_2d = torch.stack(proj_mapping[1])
-
-        if opt.use_proxy_loss:
-            data_util.load_label_frames(opt.data_path_2d, frames[v], label_images, num_classes)
-            mask2d = label_images.view(-1).clone()
+        for t,v in enumerate(indices):
+            # print(t, v)
+            if CUDA_AVAILABLE:
+                targets = torch.autograd.Variable(labels[v].cuda())
+            else:
+                targets = torch.autograd.Variable(labels[v])
+            # valid targets
+            mask = targets.view(-1).data.clone()
             for k in range(num_classes):
                 if criterion_weights[k] == 0:
-                    mask2d[mask2d.eq(k)] = 0
-            mask2d = mask2d.nonzero().squeeze()
-            if (len(mask2d.shape) == 0):
-                continue  # nothing to optimize for here
-        # 2d
-        imageft_fixed = model2d_fixed(torch.autograd.Variable(color_images))
-        imageft = model2d_trainable(imageft_fixed)
-        if opt.use_proxy_loss:
-            ft2d = model2d_classifier(imageft)
-            ft2d = ft2d.permute(0, 2, 3, 1).contiguous()
+                    mask[mask.eq(k)] = 0
 
-        # 2d/3d
-        if CUDA_AVAILABLE:
-            input3d = torch.autograd.Variable(volumes[v].cuda())
-        else:
-            input3d = torch.autograd.Variable(volumes[v])
+            maskindices = mask.nonzero().squeeze()
+            if len(maskindices.shape) == 0:
+                continue
+            transforms = world_to_grids[v].unsqueeze(1)
+            if CUDA_AVAILABLE:
+                transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4).cuda()
+            else:
+                transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4)
 
-        output = model(input3d, imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d), grid_dims)
+            # Load the data
+            # print("loading the data")
+            is_load_success = data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images, camera_poses, color_mean, color_std)
+            if not is_load_success:
+                continue
 
-        loss = criterion(output.view(-1, num_classes), targets.view(-1))
-        train_loss.append(loss.item())
-        optimizer.zero_grad()
-        optimizer2d.zero_grad()
-        loss.backward(retain_graph=True)
-        optimizer.step()
-        optimizer2d.step()
-        if opt.use_proxy_loss:
-            loss2d = criterion2d(ft2d.view(-1, num_classes), torch.autograd.Variable(label_images.view(-1)))
-            train_loss_2d.append(loss2d.item())
+
+            # compute projection mapping
+            # print("compute projection mapping")
+            proj_mapping = [projection.compute_projection(d, c, t) for d, c, t in zip(depth_images, camera_poses, transforms)]
+            if None in proj_mapping: #invalid sample
+                print('invalid sample')
+                continue
+            proj_mapping = list(zip(*proj_mapping))
+            proj_ind_3d = torch.stack(proj_mapping[0])
+            proj_ind_2d = torch.stack(proj_mapping[1])
+
+            if opt.use_proxy_loss:
+                data_util.load_label_frames(opt.data_path_2d, frames[v], label_images, num_classes)
+                mask2d = label_images.view(-1).clone()
+                for k in range(num_classes):
+                    if criterion_weights[k] == 0:
+                        mask2d[mask2d.eq(k)] = 0
+                mask2d = mask2d.nonzero().squeeze()
+                if len(mask2d.shape) == 0:
+                    continue  # nothing to optimize for here
+            # 2d
+            imageft_fixed = model2d_fixed(torch.autograd.Variable(color_images))
+            imageft = model2d_trainable(imageft_fixed)
+            if opt.use_proxy_loss:
+                ft2d = model2d_classifier(imageft)
+                ft2d = ft2d.permute(0, 2, 3, 1).contiguous()
+
+            # 2d/3d
+            if CUDA_AVAILABLE:
+                input3d = torch.autograd.Variable(volumes[v].cuda())
+            else:
+                input3d = torch.autograd.Variable(volumes[v])
+
+            output = model(input3d, imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d), grid_dims)
+
+            loss = criterion(output.view(-1, num_classes), targets.view(-1))
+            train_loss.append(loss.item())
+            optimizer.zero_grad()
             optimizer2d.zero_grad()
-            optimizer2dc.zero_grad()
-            loss2d.backward()
-            optimizer2dc.step()
+            loss.backward(retain_graph=True)
+            optimizer.step()
             optimizer2d.step()
+            if opt.use_proxy_loss:
+                loss2d = criterion2d(ft2d.view(-1, num_classes), torch.autograd.Variable(label_images.view(-1)))
+                train_loss_2d.append(loss2d.item())
+                optimizer2d.zero_grad()
+                optimizer2dc.zero_grad()
+                loss2d.backward()
+                optimizer2dc.step()
+                optimizer2d.step()
+                # confusion
+                y = ft2d.data
+                y = y.view(-1, num_classes)[:, :-1]
+                _, predictions = y.max(1)
+                predictions = predictions.view(-1)
+                k = label_images.view(-1)
+                confusion2d.add(torch.index_select(predictions, 0, mask2d), torch.index_select(k, 0, mask2d))
+
             # confusion
-            y = ft2d.data
-            y = y.view(-1, num_classes)[:, :-1]
+            y = output.data
+            y = y.view(int(y.nelement()/y.size(2)), num_classes)[:, :-1]
             _, predictions = y.max(1)
             predictions = predictions.view(-1)
-            k = label_images.view(-1)
-            confusion2d.add(torch.index_select(predictions, 0, mask2d), torch.index_select(k, 0, mask2d))
+            k = targets.data.view(-1)
+            # print("predictions: ", predictions)
+            # print("targets: ", k)
+            # print("mask indices: ", maskindices)
+            if len(maskindices) != 0:
+                confusion.add(torch.index_select(predictions, 0, maskindices), torch.index_select(k, 0, maskindices))
+            log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, loss.item()]]) + '\n')
+            iter += 1
+            if iter % 1000 == 0:
+                torch.save(model.state_dict(), os.path.join(opt.output, 'model-iter%s-epoch%s.pth' % (iter, epoch)))
+                torch.save(model2d_trainable.state_dict(), os.path.join(opt.output, 'model2d-iter%s-epoch%s.pth' % (iter, epoch)))
+                if opt.use_proxy_loss:
+                    torch.save(model2d_classifier.state_dict(), os.path.join(opt.output, 'model2dc-iter%s-epoch%s.pth' % (iter, epoch)))
+            if iter == 1:
+                torch.save(model2d_fixed.state_dict(), os.path.join(opt.output, 'model2dfixed.pth'))
 
-        # confusion
-        y = output.data
-        y = y.view(int(y.nelement()/y.size(2)), num_classes)[:, :-1]
-        _, predictions = y.max(1)
-        predictions = predictions.view(-1)
-        k = targets.data.view(-1)
-        confusion.add(torch.index_select(predictions, 0, maskindices), torch.index_select(k, 0, maskindices))
-        log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, loss.item()]]) + '\n')
-        iter += 1
-        if iter % 10000 == 0:
-            torch.save(model.state_dict(), os.path.join(opt.output, 'model-iter%s-epoch%s.pth' % (iter, epoch)))
-            torch.save(model2d_trainable.state_dict(), os.path.join(opt.output, 'model2d-iter%s-epoch%s.pth' % (iter, epoch)))
-            if opt.use_proxy_loss:
-                torch.save(model2d_classifier.state_dict(), os.path.join(opt.output, 'model2dc-iter%s-epoch%s.pth' % (iter, epoch)))
-        if iter == 1:
-            torch.save(model2d_fixed.state_dict(), os.path.join(opt.output, 'model2dfixed.pth'))
-
-        if iter % 100 == 0:
-            evaluate_confusion(confusion, train_loss, epoch, iter, -1, 'Train', log_file)
-            if opt.use_proxy_loss:
-                evaluate_confusion(confusion2d, train_loss_2d, epoch, iter, -1, 'Train2d', log_file_2d)
+            if iter % 100 == 0:
+                evaluate_confusion(confusion, train_loss, epoch, iter, -1, 'Train', log_file)
+                if opt.use_proxy_loss:
+                    evaluate_confusion(confusion2d, train_loss_2d, epoch, iter, -1, 'Train2d', log_file_2d)
 
     end = time.time()
     took = end - start

@@ -1,4 +1,6 @@
 import os, struct, math
+import random
+
 import h5py
 import numpy as np
 from scipy import misc
@@ -6,19 +8,22 @@ from PIL import Image
 import torch
 import torchvision.transforms as transforms
 
-import util
 import gc
 
-def load_hdf5_data(filename, num_classes):
+
+def load_hdf5_data(filename, num_classes, h5py_index):
     print(filename)
     assert os.path.isfile(filename)
     gc.collect()
+    
+    index = h5py_index * 1000
 
     with h5py.File(filename, 'r') as f:
-        volumes = f['data'][:].astype(np.float32)
-        labels = f['label'][:]
-        frames = f['frames'][:]
-        world_to_grids = f['world_to_grid'][:]
+        volumes = f['data'][index:index+500].astype(np.float32)
+        labels = f['label'][index:index+500]
+        frames = f['frames'][index:index+500]
+        world_to_grids = f['world_to_grid'][index:index+500]
+
     labels[np.greater(labels, num_classes - 1)] = num_classes - 1
     volumes = torch.from_numpy(volumes)
     labels = torch.from_numpy(labels.astype(np.int64))
