@@ -38,6 +38,8 @@ parser.add_argument('--start_epoch', type=int, default=0, help='start epoch')
 parser.add_argument('--model2d_type', default='scannet', help='which enet (scannet)')
 parser.add_argument('--model2d_path', required=True, help='path to enet model')
 parser.add_argument('--use_proxy_loss', dest='use_proxy_loss', action='store_true')
+# Scan completion params
+parser.add_argument('--use_smaller_model', dest='use_smaller_model', action='store_true')
 # 2d/3d 
 parser.add_argument('--voxel_size', type=float, default=0.05, help='voxel size (in meters)')
 parser.add_argument('--grid_dimX', type=int, default=31, help='3d grid dim x')
@@ -81,7 +83,7 @@ color_std = ENET_TYPES[opt.model2d_type][2]
 # create model
 num_classes = opt.num_classes
 model2d_fixed, model2d_trainable, model2d_classifier = create_enet_for_3d(ENET_TYPES[opt.model2d_type], opt.model2d_path, num_classes)
-model = Model2d3d(num_classes, num_images, intrinsic, proj_image_dims, grid_dims, opt.depth_min, opt.depth_max, opt.voxel_size)
+model = Model2d3d(num_classes, num_images, intrinsic, proj_image_dims, grid_dims, opt.depth_min, opt.depth_max, opt.voxel_size, opt.use_smaller_model)
 projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, grid_dims, opt.voxel_size)
 # create loss
 criterion_weights = torch.ones(num_classes) 
