@@ -297,104 +297,105 @@ def test(epoch, iter, log_file, val_file, log_file_2d):
         model2d_classifier.eval()
     start = time.time()
 
-    volumes, labels, frames, world_to_grids = data_util.load_hdf5_data(val_file, num_classes)
-    frames = frames[:, :2+num_images]
-    volumes = volumes.permute(0, 1, 4, 3, 2)
-    labels = labels.permute(0, 1, 4, 3, 2)
-    labels = labels[:, 0, :, grid_centerX, grid_centerY]  # center columns as targets
-    num_samples = volumes.shape[0]
-    # shuffle
-    indices = torch.randperm(num_samples).long().split(batch_size)
-    # remove last mini-batch so that all the batches have equal size
-    indices = indices[:-1]
+    for h5py_index in range(10):
+        volumes, labels, frames, world_to_grids = data_util.load_hdf5_data(val_file, num_classes, h5py_index)
+        frames = frames[:, :2+num_images]
+        volumes = volumes.permute(0, 1, 4, 3, 2)
+        labels = labels.permute(0, 1, 4, 3, 2)
+        labels = labels[:, 0, :, grid_centerX, grid_centerY]  # center columns as targets
+        num_samples = volumes.shape[0]
+        # shuffle
+        indices = torch.randperm(num_samples).long().split(batch_size)
+        # remove last mini-batch so that all the batches have equal size
+        indices = indices[:-1]
 
-    with torch.no_grad():
-        if CUDA_AVAILABLE:
-            mask = torch.cuda.LongTensor(batch_size*column_height)
-            depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
-            color_images = torch.cuda.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
-            camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
-            label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
-        else:
-            mask = torch.LongTensor(batch_size*column_height)
-            depth_images = torch.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
-            color_images = torch.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
-            camera_poses = torch.FloatTensor(batch_size * num_images, 4, 4)
-            label_images = torch.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
-
-        for t,v in enumerate(indices):
+        with torch.no_grad():
             if CUDA_AVAILABLE:
-                targets = labels[v].cuda()
+                mask = torch.cuda.LongTensor(batch_size*column_height)
+                depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+                color_images = torch.cuda.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
+                camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
+                label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
             else:
-                targets = labels[v]
-            # valid targets
-            mask = targets.view(-1).data.clone()
-            for k in range(num_classes):
-                if criterion_weights[k] == 0:
-                    mask[mask.eq(k)] = 0
-            maskindices = mask.nonzero().squeeze()
-            if len(maskindices.shape) == 0:
-                continue
+                mask = torch.LongTensor(batch_size*column_height)
+                depth_images = torch.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
+                color_images = torch.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
+                camera_poses = torch.FloatTensor(batch_size * num_images, 4, 4)
+                label_images = torch.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
 
-            transforms = world_to_grids[v].unsqueeze(1)
-            if CUDA_AVAILABLE:
-                transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4).cuda()
-            else:
-                transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4)
-
-            # get 2d data
-            data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images, camera_poses, color_mean, color_std)
-            if opt.use_proxy_loss:
-                data_util.load_label_frames(opt.data_path_2d, frames[v], label_images, num_classes)
-                mask2d = label_images.view(-1).clone()
+            for t,v in enumerate(indices):
+                if CUDA_AVAILABLE:
+                    targets = labels[v].cuda()
+                else:
+                    targets = labels[v]
+                # valid targets
+                mask = targets.view(-1).data.clone()
                 for k in range(num_classes):
-                    if criterion_weights[k] == 0:
-                        mask2d[mask2d.eq(k)] = 0
-                mask2d = mask2d.nonzero().squeeze()
-                if (len(mask2d.shape) == 0):
-                    continue  # nothing to optimize for here
-            # compute projection mapping
-            proj_mapping = [projection.compute_projection(d, c, t) for d, c, t in zip(depth_images, camera_poses, transforms)]
-            if None in proj_mapping: #invalid sample
-                #print '(invalid sample)'
-                continue
-            proj_mapping = list(zip(*proj_mapping))
-            proj_ind_3d = torch.stack(proj_mapping[0])
-            proj_ind_2d = torch.stack(proj_mapping[1])
+                    if criterion_weights_semantic[k] == 0:
+                        mask[mask.eq(k)] = 0
+                maskindices = mask.nonzero().squeeze()
+                if len(maskindices.shape) == 0:
+                    continue
 
-            # 2d
-            imageft_fixed = model2d_fixed(color_images)
-            imageft = model2d_trainable(imageft_fixed)
-            if opt.use_proxy_loss:
-                ft2d = model2d_classifier(imageft)
-                ft2d = ft2d.permute(0, 2, 3, 1).contiguous()
+                transforms = world_to_grids[v].unsqueeze(1)
+                if CUDA_AVAILABLE:
+                    transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4).cuda()
+                else:
+                    transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4)
 
-            # 2d/3d
-            if CUDA_AVAILABLE:
-                input3d = volumes[v].cuda()
-            else:
-                input3d = volumes[v]
-            output = model(input3d, imageft, proj_ind_3d, proj_ind_2d, grid_dims)
-            loss = criterion(output.view(-1, num_classes), targets.view(-1))
-            test_loss.append(loss.item())
-            if opt.use_proxy_loss:
-                loss2d = criterion2d(ft2d.view(-1, num_classes), label_images.view(-1))
-                test_loss_2d.append(loss2d.item())
+                # get 2d data
+                data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images, camera_poses, color_mean, color_std)
+                if opt.use_proxy_loss:
+                    data_util.load_label_frames(opt.data_path_2d, frames[v], label_images, num_classes)
+                    mask2d = label_images.view(-1).clone()
+                    for k in range(num_classes):
+                        if criterion_weights_semantic[k] == 0:
+                            mask2d[mask2d.eq(k)] = 0
+                    mask2d = mask2d.nonzero().squeeze()
+                    if (len(mask2d.shape) == 0):
+                        continue  # nothing to optimize for here
+                # compute projection mapping
+                proj_mapping = [projection.compute_projection(d, c, t) for d, c, t in zip(depth_images, camera_poses, transforms)]
+                if None in proj_mapping: #invalid sample
+                    #print '(invalid sample)'
+                    continue
+                proj_mapping = list(zip(*proj_mapping))
+                proj_ind_3d = torch.stack(proj_mapping[0])
+                proj_ind_2d = torch.stack(proj_mapping[1])
+
+                # 2d
+                imageft_fixed = model2d_fixed(color_images)
+                imageft = model2d_trainable(imageft_fixed)
+                if opt.use_proxy_loss:
+                    ft2d = model2d_classifier(imageft)
+                    ft2d = ft2d.permute(0, 2, 3, 1).contiguous()
+
+                # 2d/3d
+                if CUDA_AVAILABLE:
+                    input3d = volumes[v].cuda()
+                else:
+                    input3d = volumes[v]
+                output = model(input3d, imageft, proj_ind_3d, proj_ind_2d, grid_dims)
+                loss = criterion_semantic(output.view(-1, num_classes), targets.view(-1))
+                test_loss.append(loss.item())
+                if opt.use_proxy_loss:
+                    loss2d = criterion2d(ft2d.view(-1, num_classes), label_images.view(-1))
+                    test_loss_2d.append(loss2d.item())
+                    # confusion
+                    y = ft2d.data
+                    y = y.view(-1, num_classes)[:, :-1]
+                    _, predictions = y.max(1)
+                    predictions = predictions.view(-1)
+                    k = label_images.view(-1)
+                    confusion2d_val.add(torch.index_select(predictions, 0, mask2d), torch.index_select(k, 0, mask2d))
+
                 # confusion
-                y = ft2d.data
-                y = y.view(-1, num_classes)[:, :-1]
+                y = output.data
+                y = y.view(y.nelement()/y.size(2), num_classes)[:, :-1]
                 _, predictions = y.max(1)
                 predictions = predictions.view(-1)
-                k = label_images.view(-1)
-                confusion2d_val.add(torch.index_select(predictions, 0, mask2d), torch.index_select(k, 0, mask2d))
-            
-            # confusion
-            y = output.data
-            y = y.view(y.nelement()/y.size(2), num_classes)[:, :-1]
-            _, predictions = y.max(1)
-            predictions = predictions.view(-1)
-            k = targets.data.view(-1)
-            confusion_val.add(torch.index_select(predictions, 0, maskindices), torch.index_select(k, 0, maskindices))
+                k = targets.data.view(-1)
+                confusion_val.add(torch.index_select(predictions, 0, maskindices), torch.index_select(k, 0, maskindices))
 
     end = time.time()
     took = end - start
