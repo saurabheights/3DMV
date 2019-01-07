@@ -257,7 +257,7 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
 
             # confusion
             y = output_semantic.data
-            y = y.view(int(y.nelement()/y.size(2)), num_classes)[:, :-1]
+            y = y.view(y.nelement() // y.size(2), num_classes)[:, :-1]
             _, predictions = y.max(1)
             predictions = predictions.view(-1)
             k = targets_semantic.data.view(-1)
@@ -393,7 +393,7 @@ def test(epoch, iter, log_file, val_file, log_file_2d):
 
                 # confusion
                 y = output.data
-                y = y.view(y.nelement()/y.size(2), num_classes)[:, :-1]
+                y = y.view(y.nelement() // y.size(2), num_classes)[:, :-1]
                 _, predictions = y.max(1)
                 predictions = predictions.view(-1)
                 k = targets.data.view(-1)
