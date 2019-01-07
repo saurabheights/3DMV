@@ -55,7 +55,7 @@ def print_error(message):
 # from https://github.com/ScanNet/ScanNet/tree/master/BenchmarkScripts/2d_helpers/convert_scannet_label_image.py
 def map_label_image(image, label_mapping):
     mapped = np.copy(image)
-    for k,v in label_mapping.iteritems():
+    for k,v in label_mapping.items():
         mapped[image==k] = v
     return mapped.astype(np.uint8)
 
@@ -68,6 +68,7 @@ def main():
         label_map = util.read_label_mapping(opt.label_map_file, label_from='id', label_to='nyu40id')
 
     scenes = [d for d in os.listdir(opt.scannet_path) if os.path.isdir(os.path.join(opt.scannet_path, d))]
+    scenes.sort()
     print('Found %d scenes' % len(scenes))
     for i in range(len(scenes)):
         sens_file = os.path.join(opt.scannet_path, scenes[i], scenes[i] + '.sens')
@@ -99,11 +100,15 @@ def main():
 
         if opt.export_label_images:
             for f in range(0, len(sd.frames), opt.frame_skip):
-                label_file = os.path.join(label_path, str(f) + '.png')
-                image = np.array(imageio.imread(label_file))
-                image = sktf.resize(image, [opt.output_image_height, opt.output_image_width], order=0, preserve_range=True)
-                mapped_image = map_label_image(image, label_map)
-                imageio.imwrite(os.path.join(output_label_path, str(f) + '.png'), mapped_image)
+                try:
+                    label_file = os.path.join(label_path, str(f) + '.png')
+                    image = np.array(imageio.imread(label_file))
+                    image = sktf.resize(image, [opt.output_image_height, opt.output_image_width], order=0,
+                                        preserve_range=True)
+                    mapped_image = map_label_image(image, label_map)
+                    imageio.imwrite(os.path.join(output_label_path, str(f) + '.png'), mapped_image)
+                except:
+                    print('Fix %s' % f)
     print('')
 
 
