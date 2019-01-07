@@ -86,20 +86,20 @@ model2d_fixed, model2d_trainable, model2d_classifier = create_enet_for_3d(ENET_T
 model = Model2d3d(num_classes, num_images, intrinsic, proj_image_dims, grid_dims, opt.depth_min, opt.depth_max, opt.voxel_size, opt.use_smaller_model)
 projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, grid_dims, opt.voxel_size)
 # create loss
-criterion_weights = torch.ones(num_classes) 
+criterion_weights_semantic = torch.ones(num_classes)
 if opt.class_weight_file:
-    criterion_weights = util.read_class_weights_from_file(opt.class_weight_file, num_classes, True)
+    criterion_weights_semantic = util.read_class_weights_from_file(opt.class_weight_file, num_classes, True)
 for c in range(num_classes):
-    if criterion_weights[c] > 0:
-        criterion_weights[c] = 1 / np.log(1.2 + criterion_weights[c])
-print(criterion_weights.numpy())
-#raw_input('')
+    if criterion_weights_semantic[c] > 0:
+        criterion_weights_semantic[c] = 1 / np.log(1.2 + criterion_weights_semantic[c])
+
+print(criterion_weights_semantic.numpy())
 if CUDA_AVAILABLE:
-    criterion = torch.nn.CrossEntropyLoss(criterion_weights).cuda()
-    criterion2d = torch.nn.CrossEntropyLoss(criterion_weights).cuda()
+    criterion_semantic = torch.nn.CrossEntropyLoss(criterion_weights_semantic).cuda()
+    criterion2d = torch.nn.CrossEntropyLoss(criterion_weights_semantic).cuda()
 else:
-    criterion = torch.nn.CrossEntropyLoss(criterion_weights)
-    criterion2d = torch.nn.CrossEntropyLoss(criterion_weights)
+    criterion_semantic = torch.nn.CrossEntropyLoss(criterion_weights_semantic)
+    criterion2d = torch.nn.CrossEntropyLoss(criterion_weights_semantic)
 
 # move to gpu
 if CUDA_AVAILABLE:
@@ -108,7 +108,7 @@ if CUDA_AVAILABLE:
     model2d_trainable = model2d_trainable.cuda()
     model2d_classifier = model2d_classifier.cuda()
     model = model.cuda()
-    criterion = criterion.cuda()
+    criterion_semantic = criterion_semantic.cuda()
 else:
     model2d_fixed.eval()
 
@@ -171,16 +171,17 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
         for t,v in enumerate(indices):
             # print(t, v)
             if CUDA_AVAILABLE:
-                targets = torch.autograd.Variable(labels[v].cuda())
+                targets_semantic = torch.autograd.Variable(labels[v].cuda())
             else:
-                targets = torch.autograd.Variable(labels[v])
-            # valid targets
-            mask = targets.view(-1).data.clone()
-            for k in range(num_classes):
-                if criterion_weights[k] == 0:
-                    mask[mask.eq(k)] = 0
+                targets_semantic = torch.autograd.Variable(labels[v])
 
-            maskindices = mask.nonzero().squeeze()
+            # Ignore Invalid targets for semantic
+            mask_semantic = targets_semantic.view(-1).data.clone()
+            for k in range(num_classes):
+                if criterion_weights_semantic[k] == 0:
+                    mask_semantic[mask_semantic.eq(k)] = 0
+
+            maskindices = mask_semantic.nonzero().squeeze()
             if len(maskindices.shape) == 0:
                 continue
             transforms = world_to_grids[v].unsqueeze(1)
@@ -210,7 +211,7 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
                 data_util.load_label_frames(opt.data_path_2d, frames[v], label_images, num_classes)
                 mask2d = label_images.view(-1).clone()
                 for k in range(num_classes):
-                    if criterion_weights[k] == 0:
+                    if criterion_weights_semantic[k] == 0:
                         mask2d[mask2d.eq(k)] = 0
                 mask2d = mask2d.nonzero().squeeze()
                 if len(mask2d.shape) == 0:
@@ -228,13 +229,14 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
             else:
                 input3d = torch.autograd.Variable(volumes[v])
 
-            output = model(input3d, imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d), grid_dims)
+            # Forward Pass
+            output_semantic = model(input3d, imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d), grid_dims)
 
-            loss = criterion(output.view(-1, num_classes), targets.view(-1))
-            train_loss.append(loss.item())
+            loss_semantic = criterion_semantic(output_semantic.view(-1, num_classes), targets_semantic.view(-1))
+            train_loss.append(loss_semantic.item())
             optimizer.zero_grad()
             optimizer2d.zero_grad()
-            loss.backward(retain_graph=True)
+            loss_semantic.backward(retain_graph=True)
             optimizer.step()
             optimizer2d.step()
             if opt.use_proxy_loss:
@@ -254,20 +256,20 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
                 confusion2d.add(torch.index_select(predictions, 0, mask2d), torch.index_select(k, 0, mask2d))
 
             # confusion
-            y = output.data
+            y = output_semantic.data
             y = y.view(int(y.nelement()/y.size(2)), num_classes)[:, :-1]
             _, predictions = y.max(1)
             predictions = predictions.view(-1)
-            k = targets.data.view(-1)
+            k = targets_semantic.data.view(-1)
             # print("predictions: ", predictions)
             # print("targets: ", k)
             # print("mask indices: ", maskindices)
             if len(maskindices) != 0:
                 confusion.add(torch.index_select(predictions, 0, maskindices), torch.index_select(k, 0, maskindices))
-            log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, loss.item()]]) + '\n')
+            log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, loss_semantic.item()]]) + '\n')
             iter += 1
-            if iter % 1000 == 0:
-                torch.save(model.state_dict(), os.path.join(opt.output, 'model-iter%s-epoch%s.pth' % (iter, epoch)))
+            if iter % 1000 == 0: # Save more frequently, since its Collab
+                torch.save(model.state_dict(), os.path.join(opt.output, 'model-iter%s-epoch%s-loss_semantic%s.pth' % (iter, epoch, loss_semantic)))
                 torch.save(model2d_trainable.state_dict(), os.path.join(opt.output, 'model2d-iter%s-epoch%s.pth' % (iter, epoch)))
                 if opt.use_proxy_loss:
                     torch.save(model2d_classifier.state_dict(), os.path.join(opt.output, 'model2dc-iter%s-epoch%s.pth' % (iter, epoch)))
