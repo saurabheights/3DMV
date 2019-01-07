@@ -33,7 +33,8 @@ parser.add_argument('--lr', type=float, default=0.001, help='learning rate, defa
 parser.add_argument('--momentum', type=float, default=0.9, help='momentum, default=0.9')
 parser.add_argument('--num_nearest_images', type=int, default=3, help='#images')
 parser.add_argument('--weight_decay', type=float, default=0.0005, help='weight decay, default=0.0005')
-parser.add_argument('--retrain', default='', help='model to load')
+parser.add_argument('--retrain', dest='retrain', action='store_true', help='3d model to load')
+parser.add_argument('--model_3d_path', default='', help='Path of 3d model')
 parser.add_argument('--start_epoch', type=int, default=0, help='start epoch')
 parser.add_argument('--model2d_type', default='scannet', help='which enet (scannet)')
 parser.add_argument('--model2d_path', required=True, help='path to enet model')
@@ -59,6 +60,8 @@ parser.set_defaults(use_proxy_loss=False)
 opt = parser.parse_args()
 assert opt.model2d_type in ENET_TYPES
 print(opt)
+if opt.retrain:
+    assert opt.model_3d_path, "No 3d model path is provided, although retrain option is specified."
 
 # specify gpu
 # os.environ['CUDA_VISIBLE_DEVICES']=str(opt.gpu)
@@ -84,6 +87,8 @@ color_std = ENET_TYPES[opt.model2d_type][2]
 num_classes = opt.num_classes
 model2d_fixed, model2d_trainable, model2d_classifier = create_enet_for_3d(ENET_TYPES[opt.model2d_type], opt.model2d_path, num_classes)
 model = Model2d3d(num_classes, num_images, intrinsic, proj_image_dims, grid_dims, opt.depth_min, opt.depth_max, opt.voxel_size, opt.use_smaller_model)
+if opt.retrain:
+    model.load_state_dict(torch.load(opt.model_3d_path))
 projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, grid_dims, opt.voxel_size)
 # create loss
 criterion_weights_semantic = torch.ones(num_classes)
