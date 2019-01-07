@@ -52,8 +52,28 @@ class ProjectionHelper():
 
     def compute_projection(self, depth, camera_to_world, world_to_grid):
         # compute projection by voxels -> image
-        world_to_camera = torch.inverse(camera_to_world)
-        grid_to_world = torch.inverse(world_to_grid)
+        try:
+            world_to_camera = torch.inverse(camera_to_world)
+        except RuntimeError as e:
+            # Throws RuntimeError: MAGMA getrf: U(1, 1) is 0, U is singular
+            # Probably due to some pose file not uploaded properly
+            print("Got runtime exception in computing inverse of C2W: \n%s", camera_to_world)
+            if hasattr(e, 'message'):
+                print(e.message)
+            else:
+                print(e)
+            return None
+
+        try:
+            grid_to_world = torch.inverse(world_to_grid)
+        except RuntimeError as e:
+            print("Got runtime exception in computing inverse of W2G: \n%s", grid_to_world)
+            if hasattr(e, 'message'):
+                print(e.message)
+            else:
+                print(e)
+            return None
+
         voxel_bounds_min, voxel_bounds_max = self.compute_frustum_bounds(world_to_grid, camera_to_world)
 
         CUDA_AVAILABLE = os.environ['CUDA_VISIBLE_DEVICES']
