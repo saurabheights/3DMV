@@ -12,7 +12,6 @@ import gc
 
 
 def load_hdf5_data(filename, num_classes, h5py_index):
-    print(filename)
     assert os.path.isfile(filename)
     gc.collect()
     

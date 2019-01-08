@@ -1,4 +1,3 @@
-
 import argparse
 import os, sys, inspect, time
 import random
@@ -422,11 +421,12 @@ def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_fil
         total_correct += conf[c][c]
     instance_acc = -1 if conf.sum() == 0 else float(total_correct) / float(conf.sum())
     avg_acc = -1 if np.all(np.equal(valids, -1)) else np.mean(valids[np.not_equal(valids, -1)])
-    log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, torch.mean(torch.Tensor(loss)), avg_acc, instance_acc, time]]) + '\n')
+    loss_mean = torch.mean(torch.Tensor(loss))
+    log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, loss_mean, avg_acc, instance_acc, time]]) + '\n')
     log_file.flush()
 
     print('{} Epoch: {}\tIter: {}\tLoss: {:.6f}\tAcc(inst): {:.6f}\tAcc(avg): {:.6f}\tTook: {:.2f}'.format(
-        which, epoch, iter, torch.mean(torch.Tensor(loss)), instance_acc, avg_acc, time))
+        which, epoch, iter, loss_mean, instance_acc, avg_acc, time))
 
 
 def main():
