@@ -53,6 +53,9 @@ class ProjectionHelper():
     def compute_projection(self, depth, camera_to_world, world_to_grid):
         # compute projection by voxels -> image
         try:
+            if np.linalg.matrix_rank(camera_to_world) != 4:
+                print('Found singular camera_to_world %s' % camera_to_world)
+                return None
             world_to_camera = torch.inverse(camera_to_world)
         except RuntimeError as e:
             # Throws RuntimeError: MAGMA getrf: U(1, 1) is 0, U is singular
