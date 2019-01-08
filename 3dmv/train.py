@@ -65,6 +65,13 @@ if opt.retrain:
 # specify gpu
 # os.environ['CUDA_VISIBLE_DEVICES']=str(opt.gpu)
 CUDA_AVAILABLE = os.environ['CUDA_VISIBLE_DEVICES']
+if CUDA_AVAILABLE:
+    print(torch.cuda.get_device_name(0))
+    print('Using GPU')
+    displayMemoryUsageOnce = True
+else:
+    print('Using CPU')
+    displayMemoryUsageOnce = False
 
 # create camera intrinsics
 input_image_dims = [328, 256]
@@ -261,6 +268,17 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
 
             # confusion
             y = output_semantic.data
+
+            global displayMemoryUsageOnce
+            if displayMemoryUsageOnce and CUDA_AVAILABLE:
+                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+                print('Using device:', device)
+                if device.type == 'cuda':
+                    print(torch.cuda.get_device_name(0))
+                    print('Memory Usage:')
+                    print('Allocated:', round(torch.cuda.memory_allocated(0) / 1024 ** 3, 1), 'GB')
+                    print('Cached:   ', round(torch.cuda.memory_cached(0) / 1024 ** 3, 1), 'GB')
+                displayMemoryUsageOnce = False
             y = y.view(y.nelement() // y.size(2), num_classes)[:, :-1]
             _, predictions = y.max(1)
             predictions = predictions.view(-1)
