@@ -115,7 +115,7 @@ class ProjectionHelper():
         coords[3].fill_(1)
 
         # transform to current frame
-        p = torch.mm(world_to_camera, torch.mm(grid_to_world, coords))
+        p = torch.mm(torch.mm(world_to_camera, grid_to_world), coords)
 
         # project into image
         p[0] = (p[0] * self.intrinsic[0][0]) / p[2] + self.intrinsic[0][2]
