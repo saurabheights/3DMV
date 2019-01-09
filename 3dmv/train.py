@@ -101,6 +101,8 @@ if CUDA_AVAILABLE:
 grid_dims = [opt.grid_dimX, opt.grid_dimY, opt.grid_dimZ]
 column_height = opt.grid_dimZ
 batch_size = opt.batch_size
+
+assert batch_size <= 64, "Higher batch size will cause print statement to fail, search 64 // batch_size"
 num_images = opt.num_nearest_images
 grid_centerX = opt.grid_dimX // 2
 grid_centerY = opt.grid_dimY // 2
@@ -405,13 +407,15 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
             if opt.train_scan_completion:
                 msg2 = _SPLITTER.join([str(f) for f in [epoch, iter, loss_scan.item()]])
                 log_file_scan.write(msg2 + '\n')
-            if iter % 50 == 0:  # InFrequent logging stops chrome from crash[Colab] and also less strain on jupyter.
+
+            # InFrequent logging stops chrome from crash[Colab] and also less strain on jupyter.
+            if iter % (64 // batch_size) == 0:
                 print("Semantic: %s" % msg1)
                 if opt.train_scan_completion:
                     print("Scan    : %s" % msg2)
 
             iter += 1
-            if iter % 1000 == 0:  # Save more frequently, since its Google Collaboratory.
+            if iter % (1000//batch_size) == 0:  # Save more frequently, since its Google Collaboratory.
                 # Save 3d model
                 if not opt.train_scan_completion:
                     torch.save(model.state_dict(),
@@ -642,7 +646,7 @@ def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_fil
     instance_acc = -1 if conf.sum() == 0 else float(total_correct) / float(conf.sum())
     avg_acc = -1 if np.all(np.equal(valids, -1)) else np.mean(valids[np.not_equal(valids, -1)])
     loss_mean = torch.mean(torch.Tensor(loss))
-    log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, loss_mean, avg_acc, instance_acc, time]]) + '\n')
+    log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, loss_mean.item(), avg_acc, instance_acc, time]]) + '\n')
     log_file.flush()
 
     print('Epoch: {}\tIter: {}\tLoss: {:.6f}\tAcc(inst): {:.6f}\tAcc(avg): {:.6f}\tTook: {:.2f}\t{}'.format(
