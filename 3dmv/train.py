@@ -1,18 +1,19 @@
 import argparse
-import os, sys, inspect, time
+import os
 import random
+import time
+
+import numpy as np
 import torch
 import torchnet as tnt
-import numpy as np
-import itertools
 
-import util
 import data_util
-from model import Model2d3d
+import util
 from enet import create_enet_for_3d
+from model import Model2d3d
 from projection import ProjectionHelper
 
-ENET_TYPES = {'scannet': (41, [0.496342, 0.466664, 0.440796], [0.277856, 0.28623, 0.291129])}  #classes, color mean/std 
+ENET_TYPES = {'scannet': (41, [0.496342, 0.466664, 0.440796], [0.277856, 0.28623, 0.291129])}  # classes, color mean/std
 
 # params
 parser = argparse.ArgumentParser()
@@ -33,6 +34,7 @@ parser.add_argument('--momentum', type=float, default=0.9, help='momentum, defau
 parser.add_argument('--num_nearest_images', type=int, default=3, help='#images')
 parser.add_argument('--weight_decay', type=float, default=0.0005, help='weight decay, default=0.0005')
 parser.add_argument('--retrain', dest='retrain', action='store_true', help='3d model to load')
+parser.add_argument('--manualSeed', type=int, default=None, dest='manualSeed', help='Manual Seed for retraining')
 parser.add_argument('--model_3d_path', default='', help='Path of 3d model')
 parser.add_argument('--start_epoch', type=int, default=0, help='start epoch')
 parser.add_argument('--model2d_type', default='scannet', help='which enet (scannet)')
@@ -73,6 +75,14 @@ else:
     print('Using CPU')
     displayMemoryUsageOnce = False
 
+# Note: This may fail if random is called globally in  any project files which are imported above.
+if opt.manualSeed is None:
+    opt.manualSeed = random.randint(0, 99999)
+
+print('Using Random Seed value as: %d' % opt.manualSeed)
+torch.manual_seed(opt.manualSeed)  # Set for pytorch, used for cuda as well.
+random.seed(opt.manualSeed)  # Set for python
+np.random.seed(opt.manualSeed)  # Set for numpy
 # create camera intrinsics
 input_image_dims = [328, 256]
 proj_image_dims = [41, 32]
@@ -472,9 +482,9 @@ def main():
     # start training
     print('starting training...')
     iter = 0
-    num_files_per_val = 10
     for epoch in range(opt.max_epoch):
         train_loss = []
+    for epoch in range(opt.start_epoch, opt.start_epoch+opt.max_epoch):
         train2d_loss = []
         val_loss = []
         val2d_loss = []
