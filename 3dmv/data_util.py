@@ -53,9 +53,18 @@ def resize_crop_image(image, new_image_dims):
 
 
 def load_depth_label_pose(depth_file, color_file, pose_file, depth_image_dims, color_image_dims, normalize):
-    color_image = misc.imread(color_file)
-    depth_image = misc.imread(depth_file)
-    pose = load_pose(pose_file)
+    try:
+        color_image = misc.imread(color_file)
+        depth_image = misc.imread(depth_file)
+        pose = load_pose(pose_file)
+    except OSError as e:
+        print("Got OSError")
+        if hasattr(e, 'message'):
+            print(e.message)
+        else:
+            print(e)
+        return None, None, None
+
     # preprocess
     depth_image = resize_crop_image(depth_image, depth_image_dims)
     color_image = resize_crop_image(color_image, color_image_dims)
@@ -173,6 +182,8 @@ def load_frames_multi(data_path, frame_indices, depth_images, color_images, pose
     # load data
     for k in range(batch_size):
         depth_image, color_image, pose = load_depth_label_pose(depth_files[k], color_files[k], pose_files[k], depth_image_dims, color_image_dims, normalize)
+        if depth_image is None:
+            return False
         color_images[k] = color_image
         depth_images[k] = torch.from_numpy(depth_image)
         poses[k] = pose

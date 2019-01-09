@@ -39,6 +39,7 @@ parser.add_argument('--model_3d_path', default='', help='Path of 3d model')
 parser.add_argument('--start_epoch', type=int, default=0, help='start epoch')
 parser.add_argument('--model2d_type', default='scannet', help='which enet (scannet)')
 parser.add_argument('--model2d_path', required=True, help='path to enet model')
+parser.add_argument('--model2d_trainable_path', default='', help='Path of trainable part of 2d model')
 parser.add_argument('--use_proxy_loss', dest='use_proxy_loss', action='store_true')
 # Scan completion params
 parser.add_argument('--use_smaller_model', dest='use_smaller_model', action='store_true')
@@ -67,7 +68,8 @@ opt = parser.parse_args()
 assert opt.model2d_type in ENET_TYPES
 print(opt)
 if opt.retrain:
-    assert opt.model_3d_path, "No 3d model path is provided, although retrain option is specified."
+    assert opt.model_3d_path and opt.model2d_trainable_path, \
+        "No 3d model path and 2d trainable model path is provided, although retrain option is specified."
 
 # specify gpu
 # os.environ['CUDA_VISIBLE_DEVICES']=str(opt.gpu)
@@ -113,6 +115,9 @@ model = Model2d3d(num_classes, num_images, intrinsic, proj_image_dims, grid_dims
 # Load model weights
 if opt.retrain:
     model.load_state_dict(torch.load(opt.model_3d_path))
+    model2d_trainable.load_state_dict(torch.load(opt.model2d_trainable_path))
+    print("Loaded models from %s and %s" % (opt.model2d_trainable_path, opt.model_3d_path))
+
 projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, grid_dims, opt.voxel_size)
 
 # Create criterion_weights for Semantic Segmentation
@@ -376,7 +381,8 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
             # Confusion for Scan completion
             if opt.train_scan_completion:
                 y = output_scan.data
-                y = y.view(y.nelement() // y.size(2), _NUM_OCCUPANCY_STATES)
+                # Discard semantic prediction of Unknown Voxels in target_scan
+                y = y.view(y.nelement() // y.size(2), _NUM_OCCUPANCY_STATES)[:, :-1]
                 _, predictions_scan = y.max(1)
                 predictions_scan = predictions_scan.view(-1)
                 k = targets_scan.data.view(-1)
@@ -585,7 +591,8 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
                 # Confusion for Scan completion
                 if opt.train_scan_completion:
                     y = output_scan.data
-                    y = y.view(y.nelement() // y.size(2), _NUM_OCCUPANCY_STATES)
+                    # Discard semantic prediction of Unknown Voxels in target_scan
+                    y = y.view(y.nelement() // y.size(2), _NUM_OCCUPANCY_STATES)[:, :-1]
                     _, predictions_scan = y.max(1)
                     predictions_scan = predictions_scan.view(-1)
                     k = targets_scan.data.view(-1)
@@ -666,7 +673,7 @@ def main():
     print('Starting Training...')
     iter = 0
     # Note: In 3dmv, validation is done on gap of training on 10 files which is 1/10.
-    num_files_per_val = min(round(len(train_files) / 10), 1)
+    num_files_per_val = max(round(len(train_files) / 10), 1)
     for epoch in range(opt.start_epoch, opt.start_epoch+opt.max_epoch):
         train_semantic_loss = []
         train_scan_loss = []
@@ -739,5 +746,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
