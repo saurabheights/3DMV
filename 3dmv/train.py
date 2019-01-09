@@ -218,6 +218,16 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
         volumes = volumes.permute(0, 1, 4, 3, 2)
         labels = labels.permute(0, 1, 4, 3, 2)
         labels = labels[:, 0, :, grid_centerX, grid_centerY]  # center columns as targets
+
+        # Filter out the scenes not available
+        available_frames_index = data_util.get_available_frames_id(opt.data_path_2d, frames)
+        if len(available_frames_index) < batch_size:
+            continue
+        volumes = volumes[available_frames_index]
+        labels = labels[available_frames_index]
+        frames = frames[available_frames_index]
+        world_to_grids = world_to_grids[available_frames_index]
+
         num_samples = volumes.shape[0]
         # shuffle
         indices = torch.randperm(num_samples).long().split(batch_size)
@@ -457,6 +467,16 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
         volumes = volumes.permute(0, 1, 4, 3, 2)
         labels = labels.permute(0, 1, 4, 3, 2)
         labels = labels[:, 0, :, grid_centerX, grid_centerY]  # center columns as targets
+
+        # Filter out the scenes not available
+        available_frames_index = data_util.get_available_frames_id(opt.data_path_2d, frames)
+        if len(available_frames_index) < batch_size:
+            continue
+        volumes = volumes[available_frames_index]
+        labels = labels[available_frames_index]
+        frames = frames[available_frames_index]
+        world_to_grids = world_to_grids[available_frames_index]
+
         num_samples = volumes.shape[0]
         # shuffle
         indices = torch.randperm(num_samples).long().split(batch_size)

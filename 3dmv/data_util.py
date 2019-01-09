@@ -150,6 +150,26 @@ def are_all_scenes_2d_files_available(data_path, scan_names):
     return True
 
 
+printed_unavailable_scene_ids = []
+
+
+def get_available_frames_id(data_path, frames):
+    check_2d_dataset_dir(data_path)
+    available_frames_index = []
+    global available_scene_ids
+    global printed_unavailable_scene_ids
+    for i in range(frames.shape[0]):
+        scene = frames[i]
+        scene_str = 'scene%04d_%02d' % (scene[0].item(), scene[1].item())
+        if scene_str in available_scene_ids:
+            available_frames_index.append(i)
+        elif scene_str not in printed_unavailable_scene_ids:
+            print('Skipping scenes(no such directory) %s' % scene_str)
+            printed_unavailable_scene_ids.append(scene_str)
+
+    return available_frames_index
+
+
 def load_frames_multi(data_path, frame_indices, depth_images, color_images, poses, color_mean, color_std):
     # construct files
     num_images = frame_indices.shape[1] - 2
