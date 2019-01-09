@@ -687,7 +687,7 @@ def main():
 
         if opt.train_scan_completion:
             log_file_scan_val = open(os.path.join(opt.output, 'log_scan_val.csv'), 'w')
-            log_file_scan.write(_SPLITTER.join(['epoch', 'iter', 'loss', 'avg acc', 'instance acc', 'time']) + '\n')
+            log_file_scan_val.write(_SPLITTER.join(['epoch', 'iter', 'loss', 'avg acc', 'instance acc', 'time']) + '\n')
             log_file_scan_val.flush()
 
         if opt.use_proxy_loss:
