@@ -620,15 +620,15 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
                     _, predictions_scan = y.max(1)
                     predictions_scan = predictions_scan.view(-1)
                     k = targets_scan.data.view(-1)
-                    confusion_scan.add(torch.index_select(predictions_scan, 0, mask_scan_indices),
-                                       torch.index_select(k, 0, mask_scan_indices))
+                    confusion_scan_val.add(torch.index_select(predictions_scan, 0, mask_scan_indices),
+                                           torch.index_select(k, 0, mask_scan_indices))
 
     end = time.time()
     took = end - start
     evaluate_confusion(confusion_val, test_loss_semantic, epoch, iter, took,
                        'ValidationSemantic', log_file_semantic_val, num_classes)
     if opt.train_scan_completion:
-        evaluate_confusion(confusion_scan, test_loss_scan, epoch, iter, took,
+        evaluate_confusion(confusion_scan_val, test_loss_scan, epoch, iter, took,
                            'ValidationScan', log_file_scan_val, _NUM_OCCUPANCY_STATES)
     if opt.use_proxy_loss:
         evaluate_confusion(confusion2d_val, test_loss_2d, epoch, iter, took, 'Validation2d', log_file_2d_val, num_classes)
