@@ -50,7 +50,8 @@ class ProjectionHelper():
         bbox_max = np.maximum(bbox_max0, bbox_max1)
         return bbox_min, bbox_max
 
-    def compute_projection(self, depth, camera_to_world, world_to_grid):
+    def compute_projection(self, depth, camera_to_world, world_to_grid,
+                           discard_center_column_voxels, voxel_removal_fraction):
         # compute projection by voxels -> image
         try:
             if np.linalg.matrix_rank(camera_to_world) != 4:
@@ -95,17 +96,39 @@ class ProjectionHelper():
             lin_ind_volume = torch.arange(0, self.volume_dims[0] * self.volume_dims[1] * self.volume_dims[2],
                                           out=torch.LongTensor())
 
+        # Homogeneous Coordinates of 3d volume of projection of voxels in volumetric grid
         coords = camera_to_world.new(4, lin_ind_volume.size(0))
         coords[2] = lin_ind_volume / (self.volume_dims[0]*self.volume_dims[1])
         tmp = lin_ind_volume - (coords[2]*self.volume_dims[0]*self.volume_dims[1]).long()
         coords[1] = tmp / self.volume_dims[0]
         coords[0] = torch.remainder(tmp, self.volume_dims[0])
         coords[3].fill_(1)
-        mask_frustum_bounds = torch.ge(coords[0], voxel_bounds_min[0]) * torch.ge(coords[1], voxel_bounds_min[1]) * torch.ge(coords[2], voxel_bounds_min[2])
-        mask_frustum_bounds = mask_frustum_bounds * torch.lt(coords[0], voxel_bounds_max[0]) * torch.lt(coords[1], voxel_bounds_max[1]) * torch.lt(coords[2], voxel_bounds_max[2])
+
+        mask_frustum_bounds = torch.ge(coords[0], voxel_bounds_min[0]) * \
+                              torch.ge(coords[1], voxel_bounds_min[1]) * \
+                              torch.ge(coords[2], voxel_bounds_min[2])
+        mask_frustum_bounds = mask_frustum_bounds * \
+                              torch.lt(coords[0], voxel_bounds_max[0]) * \
+                              torch.lt(coords[1], voxel_bounds_max[1]) * \
+                              torch.lt(coords[2], voxel_bounds_max[2])
+
+        if discard_center_column_voxels:
+            center_voxel_begin = self.volume_dims[0]*self.volume_dims[1]//2
+            step_size = self.volume_dims[0]*self.volume_dims[1]
+            random_center_voxel_indices = torch.randperm(self.volume_dims[2]).long()
+            num_of_indices_to_discard = round(voxel_removal_fraction * self.volume_dims[2])
+            # ToDo: Minor Bug: Only known voxels should be discarded.
+            if num_of_indices_to_discard > 0:
+                random_center_voxel_indices = random_center_voxel_indices[:num_of_indices_to_discard]
+                # for i in range(self.volume_dims[2]):
+                #     mask_frustum_bounds[center_voxel_begin + i * step_size] = 0
+                random_center_voxel_indices = center_voxel_begin + random_center_voxel_indices * step_size
+                mask_frustum_bounds[random_center_voxel_indices] = 0
+
         if not mask_frustum_bounds.any():
-            #print('error: nothing in frustum bounds')
+            print('error: nothing in frustum bounds')
             return None
+
         lin_ind_volume = lin_ind_volume[mask_frustum_bounds]
         coords = coords.resize_(4, lin_ind_volume.size(0))
         coords[2] = lin_ind_volume / (self.volume_dims[0]*self.volume_dims[1])
@@ -122,10 +145,14 @@ class ProjectionHelper():
         p[1] = (p[1] * self.intrinsic[1][1]) / p[2] + self.intrinsic[1][2]
         pi = torch.round(p).long()
 
-        valid_ind_mask = torch.ge(pi[0], 0) * torch.ge(pi[1], 0) * torch.lt(pi[0], self.image_dims[0]) * torch.lt(pi[1], self.image_dims[1])
+        # Check if all points projected on image plane, lies inside image boundary
+        valid_ind_mask = torch.ge(pi[0], 0) * torch.ge(pi[1], 0) * \
+                         torch.lt(pi[0], self.image_dims[0]) * torch.lt(pi[1], self.image_dims[1])
         if not valid_ind_mask.any():
-            #print('error: no valid image indices')
+            print('error: no valid image indices')
             return None
+
+        # Create depth mask for indices with valid depth
         valid_image_ind_x = pi[0][valid_ind_mask]
         valid_image_ind_y = pi[1][valid_ind_mask]
         valid_image_ind_lin = valid_image_ind_y * self.image_dims[0] + valid_image_ind_x
@@ -133,7 +160,7 @@ class ProjectionHelper():
         depth_mask = depth_vals.ge(self.depth_min) * depth_vals.le(self.depth_max) * torch.abs(depth_vals - p[2][valid_ind_mask]).le(self.voxel_size)
 
         if not depth_mask.any():
-            #print('error: no valid depths')
+            print('error: no valid depths')
             return None
 
         lin_ind_update = lin_ind_volume[valid_ind_mask]

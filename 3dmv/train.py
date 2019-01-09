@@ -33,7 +33,7 @@ parser.add_argument('--lr', type=float, default=0.001, help='learning rate, defa
 parser.add_argument('--momentum', type=float, default=0.9, help='momentum, default=0.9')
 parser.add_argument('--num_nearest_images', type=int, default=3, help='#images')
 parser.add_argument('--weight_decay', type=float, default=0.0005, help='weight decay, default=0.0005')
-parser.add_argument('--retrain', dest='retrain', action='store_true', help='3d model to load')
+parser.add_argument('--retrain', dest='retrain', action='store_true', help='to retrain model')
 parser.add_argument('--manualSeed', type=int, default=None, dest='manualSeed', help='Manual Seed for retraining')
 parser.add_argument('--model_3d_path', default='', help='Path of 3d model')
 parser.add_argument('--start_epoch', type=int, default=0, help='start epoch')
@@ -42,7 +42,12 @@ parser.add_argument('--model2d_path', required=True, help='path to enet model')
 parser.add_argument('--use_proxy_loss', dest='use_proxy_loss', action='store_true')
 # Scan completion params
 parser.add_argument('--use_smaller_model', dest='use_smaller_model', action='store_true')
-# 2d/3d 
+parser.add_argument('--train_scan_completion', dest='train_scan_completion', action='store_true',
+                    help='train scan completion branch')
+parser.add_argument('--voxel_removal_fraction', dest='voxel_removal_fraction', default=0.25,
+                    help='% of voxels to remove from center column')
+
+# 2d/3d
 parser.add_argument('--voxel_size', type=float, default=0.05, help='voxel size (in meters)')
 parser.add_argument('--grid_dimX', type=int, default=31, help='3d grid dim x')
 parser.add_argument('--grid_dimY', type=int, default=31, help='3d grid dim y')
@@ -83,6 +88,7 @@ print('Using Random Seed value as: %d' % opt.manualSeed)
 torch.manual_seed(opt.manualSeed)  # Set for pytorch, used for cuda as well.
 random.seed(opt.manualSeed)  # Set for python
 np.random.seed(opt.manualSeed)  # Set for numpy
+
 # create camera intrinsics
 input_image_dims = [328, 256]
 proj_image_dims = [41, 32]
@@ -99,14 +105,17 @@ grid_centerY = opt.grid_dimY // 2
 color_mean = ENET_TYPES[opt.model2d_type][1]
 color_std = ENET_TYPES[opt.model2d_type][2]
 
-# create model
+# Create 2d and 3d model
 num_classes = opt.num_classes
 model2d_fixed, model2d_trainable, model2d_classifier = create_enet_for_3d(ENET_TYPES[opt.model2d_type], opt.model2d_path, num_classes)
-model = Model2d3d(num_classes, num_images, intrinsic, proj_image_dims, grid_dims, opt.depth_min, opt.depth_max, opt.voxel_size, opt.use_smaller_model)
+model = Model2d3d(num_classes, num_images, intrinsic, proj_image_dims, grid_dims, opt.depth_min, opt.depth_max, opt.voxel_size, opt.use_smaller_model, opt.train_scan_completion)
+
+# Load model weights
 if opt.retrain:
     model.load_state_dict(torch.load(opt.model_3d_path))
 projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, grid_dims, opt.voxel_size)
-# create loss
+
+# Create criterion_weights for Semantic Segmentation
 criterion_weights_semantic = torch.ones(num_classes)
 if opt.class_weight_file:
     criterion_weights_semantic = util.read_class_weights_from_file(opt.class_weight_file, num_classes, True)
@@ -114,13 +123,29 @@ for c in range(num_classes):
     if criterion_weights_semantic[c] > 0:
         criterion_weights_semantic[c] = 1 / np.log(1.2 + criterion_weights_semantic[c])
 
-print(criterion_weights_semantic.numpy())
+print("Criterion Weights for semantic: \n%s" % criterion_weights_semantic.numpy())
+
+# Create criterion_weights for Scan Completion
+discard_center_column_voxels = False
+if opt.train_scan_completion:
+    criterion_weights_scan = torch.ones(3)
+    for c in range(3):
+        criterion_weights_scan[c] = 1 / np.log(1.2 + criterion_weights_scan[c])
+    criterion_weights_scan[2] = 0  # ToDo: Is this required?
+    discard_center_column_voxels = True
+    print("Criterion Weights for scan: \n%s" % criterion_weights_scan.numpy())
+
 if CUDA_AVAILABLE:
     criterion_semantic = torch.nn.CrossEntropyLoss(criterion_weights_semantic).cuda()
     criterion2d = torch.nn.CrossEntropyLoss(criterion_weights_semantic).cuda()
 else:
     criterion_semantic = torch.nn.CrossEntropyLoss(criterion_weights_semantic)
     criterion2d = torch.nn.CrossEntropyLoss(criterion_weights_semantic)
+
+if opt.train_scan_completion:
+    criterion_scan = torch.nn.CrossEntropyLoss(criterion_weights_scan)
+    if CUDA_AVAILABLE:
+        criterion_scan = criterion_scan.cuda()
 
 # move to gpu
 if CUDA_AVAILABLE:
@@ -129,7 +154,7 @@ if CUDA_AVAILABLE:
     model2d_trainable = model2d_trainable.cuda()
     model2d_classifier = model2d_classifier.cuda()
     model = model.cuda()
-    criterion_semantic = criterion_semantic.cuda()
+    print('Model moved to cuda')
 else:
     model2d_fixed.eval()
 
@@ -141,20 +166,38 @@ if opt.use_proxy_loss:
 # data files
 train_files = util.read_lines_from_file(opt.train_data_list)
 train_files = [os.path.join(opt.train_data_list_rootdir, x) for x in train_files]  # Append root path to each filename
-val_files = [] if not opt.val_data_list else util.read_lines_from_file(opt.val_data_list)  # ToDo: Saurabh: Set validation data
+val_files = [] if not opt.val_data_list else util.read_lines_from_file(opt.val_data_list)
 val_files = [os.path.join(opt.train_data_list_rootdir, x) for x in val_files]  # Append root path to each filename
 print('#train files = %d' % (len(train_files)))
 print('#val files = %d' % (len(val_files)))
 
+_NUM_OCCUPANCY_STATES = 3
 _SPLITTER = ','
 confusion = tnt.meter.ConfusionMeter(num_classes)
 confusion2d = tnt.meter.ConfusionMeter(num_classes)
 confusion_val = tnt.meter.ConfusionMeter(num_classes)
 confusion2d_val = tnt.meter.ConfusionMeter(num_classes)
+if opt.train_scan_completion:
+    confusion_scan = tnt.meter.ConfusionMeter(_NUM_OCCUPANCY_STATES)
+    confusion_scan_val = tnt.meter.ConfusionMeter(_NUM_OCCUPANCY_STATES)
 
 
-def train(epoch, iter, log_file, train_file, log_file_2d):
-    train_loss = []
+def check_gpu_memory_usage_once():
+    global displayMemoryUsageOnce
+    if displayMemoryUsageOnce and CUDA_AVAILABLE:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print('Using device:', device)
+        if device.type == 'cuda':
+            print(torch.cuda.get_device_name(0))
+            print('Memory Usage:')
+            print('Allocated:', round(torch.cuda.memory_allocated(0) / 1024 ** 3, 1), 'GB')
+            print('Cached:   ', round(torch.cuda.memory_cached(0) / 1024 ** 3, 1), 'GB')
+        displayMemoryUsageOnce = False
+
+
+def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d):
+    train_loss_semantic = []  # To store semantic loss at each iteration
+    train_loss_scan = []  # To store scan loss at each iteration
     train_loss_2d = []
     model.train()
     start = time.time()
@@ -163,12 +206,12 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
         model2d_classifier.train()
 
     # h5py has too much data. 10000 samples are too much to use. Divide by 10 and pick 1000 at a time
+    print('Training on %s' % train_file)
     for h5py_index in range(10):
         volumes, labels, frames, world_to_grids = data_util.load_hdf5_data(train_file, num_classes, h5py_index)
         frames = frames[:, :2+num_images]
         volumes = volumes.permute(0, 1, 4, 3, 2)
         labels = labels.permute(0, 1, 4, 3, 2)
-
         labels = labels[:, 0, :, grid_centerX, grid_centerY]  # center columns as targets
         num_samples = volumes.shape[0]
         # shuffle
@@ -201,28 +244,52 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
             for k in range(num_classes):
                 if criterion_weights_semantic[k] == 0:
                     mask_semantic[mask_semantic.eq(k)] = 0
-
-            maskindices = mask_semantic.nonzero().squeeze()
-            if len(maskindices.shape) == 0:
+            mask_semantic_indices = mask_semantic.nonzero().squeeze()  # Used in confusion matrix
+            if len(mask_semantic_indices.shape) == 0:
                 continue
+
+            # Ignore Invalid targets for scan
+            # occ[0] = np.less_equal(np.abs(sdfs), 1) # occupied space - 1, empty space - 0
+            # occ[1] = np.greater_equal(sdfs, -1)     # known space = 1, unknown space - 0
+            # Known-Free Space : 1, 0(2). - Target = 0
+            # Known-Occupied Space : 1, 1 (3) - Target = 1
+            # Unknown Space: 0, 0 - (0) - Target = 2
+            # Create mask from current volume where 1 represents voxel is known-free or known-occupied.
+            # ToDo: Ask tutor: What if I don't use a mask?
+            # 0 input should target 0, 1 should 1 and 2(from before voxel discarding) should 2.
+            if opt.train_scan_completion:
+                mask_scan = targets_semantic.view(-1).data.clone()
+                mask_scan[:] = 1
+                # Ignore Unknown Voxels from before.
+                mask_scan[targets_semantic.view(-1).eq(opt.num_classes - 1)] = 0
+                mask_scan_indices = mask_scan.nonzero().squeeze()
+                if len(mask_scan_indices.shape) == 0:
+                    continue
+
+                # ToDo: What if you generate targets_scan from volumetric grid?
+                # ToDo: You should get the same result but confirm.
+                targets_scan = targets_semantic.view(-1).data.clone()
+                targets_scan[torch.ge(targets_scan, 1) * torch.lt(targets_scan, num_classes-1)] = 1
+                targets_scan[torch.eq(targets_scan, num_classes - 1)] = 2  # Label 41 with class 2
+
             transforms = world_to_grids[v].unsqueeze(1)
+            transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4)
             if CUDA_AVAILABLE:
-                transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4).cuda()
-            else:
-                transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4)
+                transforms = transforms.cuda()
 
             # Load the data
             # print("loading the data")
-            is_load_success = data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images, camera_poses, color_mean, color_std)
+            is_load_success = data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images,
+                                                          camera_poses, color_mean, color_std)
             if not is_load_success:
                 continue
 
-
-            # compute projection mapping
-            # print("compute projection mapping")
-            proj_mapping = [projection.compute_projection(d, c, t) for d, c, t in zip(depth_images, camera_poses, transforms)]
-            if None in proj_mapping: #invalid sample
-                print('invalid sample')
+            # Compute projection mapping and discard center voxels if training for scan completion
+            proj_mapping = [projection.compute_projection(d, c, t,
+                                                          discard_center_column_voxels, opt.voxel_removal_fraction)
+                            for d, c, t in zip(depth_images, camera_poses, transforms)]
+            if None in proj_mapping:  # Invalid sample
+                print('No mapping in proj_mapping')
                 continue
             proj_mapping = list(zip(*proj_mapping))
             proj_ind_3d = torch.stack(proj_mapping[0])
@@ -237,6 +304,7 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
                 mask2d = mask2d.nonzero().squeeze()
                 if len(mask2d.shape) == 0:
                     continue  # nothing to optimize for here
+
             # 2d
             imageft_fixed = model2d_fixed(torch.autograd.Variable(color_images))
             imageft = model2d_trainable(imageft_fixed)
@@ -245,21 +313,40 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
                 ft2d = ft2d.permute(0, 2, 3, 1).contiguous()
 
             # 2d/3d
+            input3d = torch.autograd.Variable(volumes[v])
             if CUDA_AVAILABLE:
-                input3d = torch.autograd.Variable(volumes[v].cuda())
-            else:
-                input3d = torch.autograd.Variable(volumes[v])
+                input3d = input3d.cuda()
 
             # Forward Pass
-            output_semantic = model(input3d, imageft, torch.autograd.Variable(proj_ind_3d), torch.autograd.Variable(proj_ind_2d), grid_dims)
+            output_semantic, output_scan = model(input3d, imageft, torch.autograd.Variable(proj_ind_3d),
+                                                 torch.autograd.Variable(proj_ind_2d), grid_dims)
 
+            # Display Once GPU memory usage - Be Sure of GPU usage. Collab is a bit unpredictable
+            check_gpu_memory_usage_once()
+
+            # Compute Scan and semantic Loss
             loss_semantic = criterion_semantic(output_semantic.view(-1, num_classes), targets_semantic.view(-1))
-            train_loss.append(loss_semantic.item())
+            train_loss_semantic.append(loss_semantic.item())
+            if opt.train_scan_completion:
+                loss_scan = criterion_scan(output_scan.view(-1, _NUM_OCCUPANCY_STATES),
+                                           targets_scan.view(-1))
+                train_loss_scan.append(loss_scan.item())
+                loss = loss_scan + loss_semantic
+            else:
+                loss = loss_semantic
+
+            # Backpropagate total loss.
+            # ToDo: Note using same optimizer for both branches. Is there a need for different optimizers?
             optimizer.zero_grad()
             optimizer2d.zero_grad()
-            loss_semantic.backward(retain_graph=True)
+            # ToDo: Should retain be disabled when not using proxy loss. Reduces mem consumption.
+            loss.backward(retain_graph=True)
             optimizer.step()
+            # optimizer2d.step is probably required even when use_proxy_loss is False, since backprojection layer is
+            # differentiable, allowing us to backpropagate the gradients to 2d model from model(3D).
             optimizer2d.step()
+
+            # ToDo: Check if proxy loss is required. If optimizer2d is injecting gradients, proxy loss may be needed.
             if opt.use_proxy_loss:
                 loss2d = criterion2d(ft2d.view(-1, num_classes), torch.autograd.Variable(label_images.view(-1)))
                 train_loss_2d.append(loss2d.item())
@@ -276,53 +363,78 @@ def train(epoch, iter, log_file, train_file, log_file_2d):
                 k = label_images.view(-1)
                 confusion2d.add(torch.index_select(predictions, 0, mask2d), torch.index_select(k, 0, mask2d))
 
-            # confusion
+            # Confusion for Semantic
             y = output_semantic.data
-
-            global displayMemoryUsageOnce
-            if displayMemoryUsageOnce and CUDA_AVAILABLE:
-                device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-                print('Using device:', device)
-                if device.type == 'cuda':
-                    print(torch.cuda.get_device_name(0))
-                    print('Memory Usage:')
-                    print('Allocated:', round(torch.cuda.memory_allocated(0) / 1024 ** 3, 1), 'GB')
-                    print('Cached:   ', round(torch.cuda.memory_cached(0) / 1024 ** 3, 1), 'GB')
-                displayMemoryUsageOnce = False
+            # Discard semantic prediction of class num_classes-1[Unknown Voxel]
             y = y.view(y.nelement() // y.size(2), num_classes)[:, :-1]
             _, predictions = y.max(1)
             predictions = predictions.view(-1)
             k = targets_semantic.data.view(-1)
-            # print("predictions: ", predictions)
-            # print("targets: ", k)
-            # print("mask indices: ", maskindices)
-            if len(maskindices) != 0:
-                confusion.add(torch.index_select(predictions, 0, maskindices), torch.index_select(k, 0, maskindices))
-            log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, loss_semantic.item()]]) + '\n')
+            confusion.add(torch.index_select(predictions, 0, mask_semantic_indices),
+                          torch.index_select(k, 0, mask_semantic_indices))
+
+            # Confusion for Scan completion
+            if opt.train_scan_completion:
+                y = output_scan.data
+                y = y.view(y.nelement() // y.size(2), _NUM_OCCUPANCY_STATES)
+                _, predictions_scan = y.max(1)
+                predictions_scan = predictions_scan.view(-1)
+                k = targets_scan.data.view(-1)
+                confusion_scan.add(torch.index_select(predictions_scan, 0, mask_scan_indices),
+                                   torch.index_select(k, 0, mask_scan_indices))
+
+            # Log loss for current iteration and print every 20th turn.
+            msg1 = _SPLITTER.join([str(f) for f in [epoch, iter, loss_semantic.item()]])
+            log_file_semantic.write(msg1 + '\n')
+            if opt.train_scan_completion:
+                msg2 = _SPLITTER.join([str(f) for f in [epoch, iter, loss_scan.item()]])
+                log_file_scan.write(msg2 + '\n')
+            if iter % 50 == 0:  # InFrequent logging stops chrome from crash[Colab] and also less strain on jupyter.
+                print("Semantic: %s" % msg1)
+                if opt.train_scan_completion:
+                    print("Scan    : %s" % msg2)
+
             iter += 1
-            if iter % 1000 == 0: # Save more frequently, since its Collab
-                torch.save(model.state_dict(), os.path.join(opt.output, 'model-iter%s-epoch%s-loss_semantic%s.pth' % (iter, epoch, loss_semantic)))
-                torch.save(model2d_trainable.state_dict(), os.path.join(opt.output, 'model2d-iter%s-epoch%s.pth' % (iter, epoch)))
+            if iter % 1000 == 0:  # Save more frequently, since its Google Collaboratory.
+                # Save 3d model
+                if not opt.train_scan_completion:
+                    torch.save(model.state_dict(),
+                               os.path.join(opt.output, 'model-semantic-epoch%s-iter%s-Sem%s.pth'
+                                            % (epoch, iter, str(loss_semantic.item()))))
+                else:
+                    torch.save(model.state_dict(),
+                               os.path.join(opt.output, 'model-semantic_and_scan-epoch%s-iter%s-sem%s-scan%s.pth'
+                                            % (epoch, iter, str(loss_semantic.item()), str(loss_scan.item()))))
+                # Save 2d model
+                # Important ToDo: Do we need to retrain on model2d_trainable
+                torch.save(model2d_trainable.state_dict(),
+                           os.path.join(opt.output, 'model2d-iter%s-epoch%s.pth' % (iter, epoch)))
                 if opt.use_proxy_loss:
-                    torch.save(model2d_classifier.state_dict(), os.path.join(opt.output, 'model2dc-iter%s-epoch%s.pth' % (iter, epoch)))
+                    torch.save(model2d_classifier.state_dict(),
+                               os.path.join(opt.output, 'model2dc-iter%s-epoch%s.pth' % (iter, epoch)))
             if iter == 1:
                 torch.save(model2d_fixed.state_dict(), os.path.join(opt.output, 'model2dfixed.pth'))
 
             if iter % 100 == 0:
-                evaluate_confusion(confusion, train_loss, epoch, iter, -1, 'Train', log_file)
+                evaluate_confusion(confusion, train_loss_semantic, epoch, iter, -1, 'TrainSemantic', log_file_semantic, num_classes)
+                if opt.train_scan_completion:
+                    evaluate_confusion(confusion_scan, train_loss_scan, epoch, iter, -1, 'TrainScan', log_file_scan, _NUM_OCCUPANCY_STATES)
                 if opt.use_proxy_loss:
-                    evaluate_confusion(confusion2d, train_loss_2d, epoch, iter, -1, 'Train2d', log_file_2d)
+                    evaluate_confusion(confusion2d, train_loss_2d, epoch, iter, -1, 'Train2d', log_file_2d, num_classes)
 
     end = time.time()
     took = end - start
-    evaluate_confusion(confusion, train_loss, epoch, iter, took, 'Train', log_file)
+    evaluate_confusion(confusion, train_loss_semantic, epoch, iter, took, 'TrainSemantic', log_file_semantic, num_classes)
+    if opt.train_scan_completion:
+        evaluate_confusion(confusion_scan, train_loss_scan, epoch, iter, -1, 'TrainScan', log_file_scan, _NUM_OCCUPANCY_STATES)
     if opt.use_proxy_loss:
-        evaluate_confusion(confusion2d, train_loss_2d, epoch, iter, took, 'Train2d', log_file_2d)
-    return train_loss, iter, train_loss_2d
+        evaluate_confusion(confusion2d, train_loss_2d, epoch, iter, took, 'Train2d', log_file_2d, num_classes)
+    return train_loss_semantic, train_loss_scan, iter, train_loss_2d
 
 
-def test(epoch, iter, log_file, val_file, log_file_2d):
-    test_loss = []
+def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_file_2d_val):
+    test_loss_semantic = []  # To store semantic loss at each iteration
+    test_loss_scan = []  # To store scan loss at each iteration
     test_loss_2d = []
     model.eval()
     model2d_fixed.eval()
@@ -331,6 +443,8 @@ def test(epoch, iter, log_file, val_file, log_file_2d):
         model2d_classifier.eval()
     start = time.time()
 
+    # h5py has too much data. 10000 samples are too much to use. Divide by 10 and pick 1000 at a time
+    print('Validating on %s' % val_file)
     for h5py_index in range(10):
         volumes, labels, frames, world_to_grids = data_util.load_hdf5_data(val_file, num_classes, h5py_index)
         frames = frames[:, :2+num_images]
@@ -345,40 +459,75 @@ def test(epoch, iter, log_file, val_file, log_file_2d):
 
         with torch.no_grad():
             if CUDA_AVAILABLE:
-                mask = torch.cuda.LongTensor(batch_size*column_height)
+                mask_semantic = torch.cuda.LongTensor(batch_size*column_height)
                 depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
                 color_images = torch.cuda.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
                 camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
                 label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
             else:
-                mask = torch.LongTensor(batch_size*column_height)
+                mask_semantic = torch.LongTensor(batch_size*column_height)
                 depth_images = torch.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
                 color_images = torch.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
                 camera_poses = torch.FloatTensor(batch_size * num_images, 4, 4)
                 label_images = torch.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
 
             for t,v in enumerate(indices):
+                # print(t, v)
                 if CUDA_AVAILABLE:
-                    targets = labels[v].cuda()
+                    targets_semantic = labels[v].cuda()
                 else:
-                    targets = labels[v]
-                # valid targets
-                mask = targets.view(-1).data.clone()
+                    targets_semantic = labels[v]
+
+                # Ignore Invalid targets for semantic
+                mask_semantic = targets_semantic.view(-1).data.clone()
                 for k in range(num_classes):
                     if criterion_weights_semantic[k] == 0:
-                        mask[mask.eq(k)] = 0
-                maskindices = mask.nonzero().squeeze()
-                if len(maskindices.shape) == 0:
+                        mask_semantic[mask_semantic.eq(k)] = 0
+                mask_indices_semantic = mask_semantic.nonzero().squeeze()
+                if len(mask_indices_semantic.shape) == 0:
                     continue
 
+                # Ignore Invalid targets for scan
+                # Create mask from current volume where 1 represents voxel is known-free or known-occupied.
+                # 0 input should target 0, 1 should 1 and 2(from before voxel discarding) should 2.
+                if opt.train_scan_completion:
+                    mask_scan = targets_semantic.view(-1).data.clone()
+                    mask_scan[:] = 1
+                    # Ignore Unknown Voxels from before.
+                    mask_scan[targets_semantic.view(-1).eq(opt.num_classes - 1)] = 0
+                    mask_scan_indices = mask_scan.nonzero().squeeze()
+                    if len(mask_scan_indices.shape) == 0:
+                        continue
+
+                    # ToDo: What if you generate targets_scan from volumetric grid?
+                    # ToDo: You should get the same result but confirm.
+                    targets_scan = targets_semantic.view(-1).data.clone()
+                    targets_scan[torch.ge(targets_scan, 1) * torch.lt(targets_scan, num_classes - 1)] = 1
+                    targets_scan[torch.eq(targets_scan, num_classes - 1)] = 2  # Label 41 with class 2
+
                 transforms = world_to_grids[v].unsqueeze(1)
+                transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4)
                 if CUDA_AVAILABLE:
-                    transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4).cuda()
-                else:
-                    transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4)
+                    transforms = transforms.cuda()
 
                 # get 2d data
-                data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images, camera_poses, color_mean, color_std)
+                is_load_success = data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images,
+                                                              color_images, camera_poses, color_mean, color_std)
+                if not is_load_success:
+                    continue
+
+                # Compute projection mapping and discard center voxels if training for scan completion
+                proj_mapping = [projection.compute_projection(d, c, t,
+                                                              discard_center_column_voxels,
+                                                              opt.voxel_removal_fraction)
+                                for d, c, t in zip(depth_images, camera_poses, transforms)]
+                if None in proj_mapping:
+                    print('No mapping in proj_mapping')
+                    continue
+                proj_mapping = list(zip(*proj_mapping))
+                proj_ind_3d = torch.stack(proj_mapping[0])
+                proj_ind_2d = torch.stack(proj_mapping[1])
+
                 if opt.use_proxy_loss:
                     data_util.load_label_frames(opt.data_path_2d, frames[v], label_images, num_classes)
                     mask2d = label_images.view(-1).clone()
@@ -386,16 +535,8 @@ def test(epoch, iter, log_file, val_file, log_file_2d):
                         if criterion_weights_semantic[k] == 0:
                             mask2d[mask2d.eq(k)] = 0
                     mask2d = mask2d.nonzero().squeeze()
-                    if (len(mask2d.shape) == 0):
+                    if len(mask2d.shape) == 0:
                         continue  # nothing to optimize for here
-                # compute projection mapping
-                proj_mapping = [projection.compute_projection(d, c, t) for d, c, t in zip(depth_images, camera_poses, transforms)]
-                if None in proj_mapping: #invalid sample
-                    #print '(invalid sample)'
-                    continue
-                proj_mapping = list(zip(*proj_mapping))
-                proj_ind_3d = torch.stack(proj_mapping[0])
-                proj_ind_2d = torch.stack(proj_mapping[1])
 
                 # 2d
                 imageft_fixed = model2d_fixed(color_images)
@@ -409,13 +550,22 @@ def test(epoch, iter, log_file, val_file, log_file_2d):
                     input3d = volumes[v].cuda()
                 else:
                     input3d = volumes[v]
-                output = model(input3d, imageft, proj_ind_3d, proj_ind_2d, grid_dims)
-                loss = criterion_semantic(output.view(-1, num_classes), targets.view(-1))
-                test_loss.append(loss.item())
+
+                # Forward Pass Only
+                output_semantic, output_scan = model(input3d, imageft, proj_ind_3d, proj_ind_2d, grid_dims)
+
+                # Compute Scan and semantic Loss
+                loss_semantic = criterion_semantic(output_semantic.view(-1, num_classes), targets_semantic.view(-1))
+                test_loss_semantic.append(loss_semantic.item())
+                if opt.train_scan_completion:
+                    loss_scan = criterion_scan(output_scan.view(-1, _NUM_OCCUPANCY_STATES),
+                                               targets_scan.view(-1))
+                    test_loss_scan.append(loss_scan.item())
+
                 if opt.use_proxy_loss:
                     loss2d = criterion2d(ft2d.view(-1, num_classes), label_images.view(-1))
                     test_loss_2d.append(loss2d.item())
-                    # confusion
+                    # Confusion
                     y = ft2d.data
                     y = y.view(-1, num_classes)[:, :-1]
                     _, predictions = y.max(1)
@@ -423,27 +573,42 @@ def test(epoch, iter, log_file, val_file, log_file_2d):
                     k = label_images.view(-1)
                     confusion2d_val.add(torch.index_select(predictions, 0, mask2d), torch.index_select(k, 0, mask2d))
 
-                # confusion
-                y = output.data
+                # Confusion for Semantic
+                y = output_semantic.data
                 y = y.view(y.nelement() // y.size(2), num_classes)[:, :-1]
                 _, predictions = y.max(1)
                 predictions = predictions.view(-1)
-                k = targets.data.view(-1)
-                confusion_val.add(torch.index_select(predictions, 0, maskindices), torch.index_select(k, 0, maskindices))
+                k = targets_semantic.data.view(-1)
+                confusion_val.add(torch.index_select(predictions, 0, mask_indices_semantic),
+                                  torch.index_select(k, 0, mask_indices_semantic))
+
+                # Confusion for Scan completion
+                if opt.train_scan_completion:
+                    y = output_scan.data
+                    y = y.view(y.nelement() // y.size(2), _NUM_OCCUPANCY_STATES)
+                    _, predictions_scan = y.max(1)
+                    predictions_scan = predictions_scan.view(-1)
+                    k = targets_scan.data.view(-1)
+                    confusion_scan.add(torch.index_select(predictions_scan, 0, mask_scan_indices),
+                                       torch.index_select(k, 0, mask_scan_indices))
 
     end = time.time()
     took = end - start
-    evaluate_confusion(confusion_val, test_loss, epoch, iter, took, 'Test', log_file)
+    evaluate_confusion(confusion_val, test_loss_semantic, epoch, iter, took,
+                       'ValidationSemantic', log_file_semantic_val, num_classes)
+    if opt.train_scan_completion:
+        evaluate_confusion(confusion_scan, test_loss_scan, epoch, iter, took,
+                           'ValidationScan', log_file_scan_val, _NUM_OCCUPANCY_STATES)
     if opt.use_proxy_loss:
-         evaluate_confusion(confusion2d_val, test_loss_2d, epoch, iter, took, 'Test2d', log_file_2d)
-    return test_loss, test_loss_2d
+        evaluate_confusion(confusion2d_val, test_loss_2d, epoch, iter, took, 'Validation2d', log_file_2d_val, num_classes)
+    return test_loss_semantic, test_loss_scan, test_loss_2d
 
 
-def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_file):
+def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_file, _num_classes):
     conf = confusion_matrix.value()
     total_correct = 0
     valids = np.zeros(num_classes, dtype=np.float32)
-    for c in range(num_classes):
+    for c in range(_num_classes):
         num = conf[c,:].sum()
         valids[c] = -1 if num == 0 else float(conf[c][c]) / float(num)
         total_correct += conf[c][c]
@@ -453,77 +618,123 @@ def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_fil
     log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, loss_mean, avg_acc, instance_acc, time]]) + '\n')
     log_file.flush()
 
-    print('{} Epoch: {}\tIter: {}\tLoss: {:.6f}\tAcc(inst): {:.6f}\tAcc(avg): {:.6f}\tTook: {:.2f}'.format(
-        which, epoch, iter, loss_mean, instance_acc, avg_acc, time))
+    print('Epoch: {}\tIter: {}\tLoss: {:.6f}\tAcc(inst): {:.6f}\tAcc(avg): {:.6f}\tTook: {:.2f}\t{}'.format(
+        epoch, iter, loss_mean.data, instance_acc, avg_acc, time, which))
 
 
 def main():
     if not os.path.exists(opt.output):
         os.makedirs(opt.output)
-    log_file = open(os.path.join(opt.output, 'log.csv'), 'w')
-    log_file.write(_SPLITTER.join(['epoch','iter','loss','avg acc', 'instance acc', 'time']) + '\n')
-    log_file.flush()
+
+    # ToDo: Reduce the below log files code as done for log_file.close at the end.
+    log_file_semantic = open(os.path.join(opt.output, 'log_train.csv'), 'w')
+    log_file_semantic.write(_SPLITTER.join(['epoch', 'iter', 'loss', 'avg acc', 'instance acc', 'time']) + '\n')
+    log_file_semantic.flush()
+
+    log_file_scan = None
+    if opt.train_scan_completion:
+        log_file_scan = open(os.path.join(opt.output, 'log_scan_train.csv'), 'w')
+        log_file_scan.write(_SPLITTER.join(['epoch', 'iter', 'loss', 'avg acc', 'instance acc', 'time']) + '\n')
+        log_file_scan.flush()
+
     log_file_2d = None
     if opt.use_proxy_loss:
-        log_file_2d = open(os.path.join(opt.output, 'log2d.csv'), 'w')
-        log_file_2d.write(_SPLITTER.join(['epoch','iter','loss','avg acc', 'instance acc', 'time']) + '\n')
+        log_file_2d = open(os.path.join(opt.output, 'log2d_train.csv'), 'w')
+        log_file_2d.write(_SPLITTER.join(['epoch', 'iter', 'loss', 'avg acc', 'instance acc', 'time']) + '\n')
         log_file_2d.flush()
 
     has_val = len(val_files) > 0
+    log_file_semantic_val = None
+    log_file_scan_val = None
+    log_file_2d_val = None
     if has_val:
-        log_file_val = open(os.path.join(opt.output, 'log_val.csv'), 'w')
-        log_file_val.write(_SPLITTER.join(['epoch', 'iter', 'loss','avg acc', 'instance acc', 'time']) + '\n')
-        log_file_val.flush()
-        log_file_2d_val = None
+        log_file_semantic_val = open(os.path.join(opt.output, 'log_semantic_val.csv'), 'w')
+        log_file_semantic_val.write(_SPLITTER.join(['epoch', 'iter', 'loss', 'avg acc', 'instance acc', 'time']) + '\n')
+        log_file_semantic_val.flush()
+
+        if opt.train_scan_completion:
+            log_file_scan_val = open(os.path.join(opt.output, 'log_scan_val.csv'), 'w')
+            log_file_scan.write(_SPLITTER.join(['epoch', 'iter', 'loss', 'avg acc', 'instance acc', 'time']) + '\n')
+            log_file_scan_val.flush()
+
         if opt.use_proxy_loss:
             log_file_2d_val = open(os.path.join(opt.output, 'log2d_val.csv'), 'w')
-            log_file_2d_val.write(_SPLITTER.join(['epoch','iter','loss','avg acc', 'instance acc', 'time']) + '\n')
+            log_file_2d_val.write(_SPLITTER.join(['epoch', 'iter', 'loss', 'avg acc', 'instance acc', 'time']) + '\n')
             log_file_2d_val.flush()
-    # start training
-    print('starting training...')
+
+    # Start training
+    print('Starting Training...')
     iter = 0
-    for epoch in range(opt.max_epoch):
-        train_loss = []
+    # Note: In 3dmv, validation is done on gap of training on 10 files which is 1/10.
+    num_files_per_val = min(round(len(train_files) / 10), 1)
     for epoch in range(opt.start_epoch, opt.start_epoch+opt.max_epoch):
+        train_semantic_loss = []
+        train_scan_loss = []
         train2d_loss = []
-        val_loss = []
+        val_semantic_loss = []
+        val_scan_loss = []
         val2d_loss = []
-        # go thru shuffled train files
+        # Process shuffled train files
         train_file_indices = torch.randperm(len(train_files))
         for k in range(len(train_file_indices)):
             print('Epoch: {}\tFile: {}/{}\t{}'.format(epoch, k, len(train_files), train_files[train_file_indices[k]]))
-            loss, iter, loss2d = train(epoch, iter, log_file, train_files[train_file_indices[k]], log_file_2d)
-            train_loss.extend(loss)
+
+            # Train
+            loss_semantic, loss_scan, iter, loss2d = \
+                train(epoch, iter, log_file_semantic, log_file_scan, train_files[train_file_indices[k]], log_file_2d)
+
+            # Save all losses
+            train_semantic_loss.extend(loss_semantic)
+            if opt.train_scan_completion:
+                train_scan_loss.extend(loss_scan)
             if loss2d:
-                 train2d_loss.extend(loss2d)
+                train2d_loss.extend(loss2d)
+
+            # Validation
             if has_val and k % num_files_per_val == 0:
                 val_index = torch.randperm(len(val_files))[0]
-                loss, loss2d = test(epoch, iter, log_file_val, val_files[val_index], log_file_2d_val)
-                val_loss.extend(loss)
+                loss_semantic, loss_scan, loss2d = \
+                    test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_files[val_index], log_file_2d_val)
+
+                val_semantic_loss.extend(loss_semantic)
+                if opt.train_scan_completion:
+                    val_scan_loss.extend(loss_scan)
                 if loss2d:
-                     val2d_loss.extend(loss2d)
-        evaluate_confusion(confusion, train_loss, epoch, iter, -1, 'Train', log_file)
+                    val2d_loss.extend(loss2d)
+
+        evaluate_confusion(confusion, train_semantic_loss, epoch, iter, -1, 'TrainSemantic', log_file_semantic, num_classes)
+        if opt.train_scan_completion:
+            evaluate_confusion(confusion_scan, train_scan_loss, epoch, iter, -1, 'TrainScan', log_file_scan, _NUM_OCCUPANCY_STATES)
         if opt.use_proxy_loss:
-            evaluate_confusion(confusion2d, train2d_loss, epoch, iter, -1, 'Train2d', log_file_2d)
+            evaluate_confusion(confusion2d, train2d_loss, epoch, iter, -1, 'Train2d', log_file_2d, num_classes)
+
         if has_val:
-            evaluate_confusion(confusion_val, val_loss, epoch, iter, -1, 'Test', log_file_val)
+            evaluate_confusion(confusion_val, val_semantic_loss, epoch, iter, -1,
+                               'ValidationSemantic', log_file_semantic_val, num_classes)
+            if opt.train_scan_completion:
+                evaluate_confusion(confusion_scan_val, val_scan_loss, epoch, iter, -1, 'ValidationScan', log_file_scan_val, _NUM_OCCUPANCY_STATES)
             if opt.use_proxy_loss:
-                evaluate_confusion(confusion2d_val, val_loss, epoch, iter, -1, 'Test2d', log_file_2d_val)
-        torch.save(model.state_dict(), os.path.join(opt.output, 'model-epoch-%s.pth' % epoch))
+                evaluate_confusion(confusion2d_val, val2d_loss, epoch, iter, -1, 'Validation2d', log_file_2d_val, num_classes)
+
+        if not opt.train_scan_completion:
+            torch.save(model.state_dict(), os.path.join(opt.output, 'model-semantic-epoch-%s.pth' % epoch))
+        else:
+            torch.save(model.state_dict(), os.path.join(opt.output, 'model-semantic_and_scan-epoch-%s.pth' % epoch))
+
         torch.save(model2d_trainable.state_dict(), os.path.join(opt.output, 'model2d-epoch-%s.pth' % epoch))
         if opt.use_proxy_loss:
             torch.save(model2d_classifier.state_dict(), os.path.join(opt.output, 'model2dc-epoch-%s.pth' % epoch))
         confusion.reset()
-        confusion2d.reset()
         confusion_val.reset()
+        confusion_scan.reset()
+        confusion_scan_val.reset()
+        confusion2d.reset()
         confusion2d_val.reset()
-    log_file.close()
-    if has_val:
-        log_file_val.close()
-    if opt.use_proxy_loss:
-        log_file_2d.close()
-        if has_val:
-            log_file_2d_val.close()
+
+    # Close all log files
+    log_files = [log_file_semantic, log_file_semantic_val, log_file_scan, log_file_scan_val, log_file_2d, log_file_2d_val]
+    log_files = list(filter(lambda x: x is not None, log_files))  # Remove None
+    list(map(lambda f: f.close(), log_files))
 
 
 if __name__ == '__main__':

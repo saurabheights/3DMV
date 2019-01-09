@@ -14,14 +14,16 @@ import gc
 def load_hdf5_data(filename, num_classes, h5py_index):
     assert os.path.isfile(filename)
     gc.collect()
-    
-    index = h5py_index * 1000
+
+    NUM_TO_LOAD=1000
+    start_index = h5py_index * NUM_TO_LOAD
+    end_index = start_index + NUM_TO_LOAD
 
     with h5py.File(filename, 'r') as f:
-        volumes = f['data'][index:index+500].astype(np.float32)
-        labels = f['label'][index:index+500]
-        frames = f['frames'][index:index+500]
-        world_to_grids = f['world_to_grid'][index:index+500]
+        volumes = f['data'][start_index:end_index].astype(np.float32)
+        labels = f['label'][start_index:end_index]
+        frames = f['frames'][start_index:end_index]
+        world_to_grids = f['world_to_grid'][start_index:end_index]
 
     labels[np.greater(labels, num_classes - 1)] = num_classes - 1
     volumes = torch.from_numpy(volumes)

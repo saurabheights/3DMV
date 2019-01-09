@@ -10,7 +10,7 @@ from projection import Projection
 
 # z-y-x coordinates
 class Model2d3d(nn.Module):
-    def __init__(self, num_classes, num_images, intrinsic, image_dims, grid_dims, depth_min, depth_max, voxel_size, use_smaller_model):
+    def __init__(self, num_classes, num_images, intrinsic, image_dims, grid_dims, depth_min, depth_max, voxel_size, use_smaller_model, train_scan_completion):
         super(Model2d3d, self).__init__()
         self.num_classes = num_classes
         self.num_images = num_images
@@ -93,12 +93,6 @@ class Model2d3d(nn.Module):
                 nn.ReLU(True),
                 nn.Dropout3d(0.2)
             )
-            self.classifier = nn.Sequential(
-                nn.Linear(self.nf2 * 54, self.bf),
-                nn.ReLU(True),
-                nn.Dropout(0.5),
-                nn.Linear(self.bf, num_classes*column_height)
-            )
         else:
             print('Using smaller model')
             self.features2d = nn.Sequential(
@@ -162,11 +156,20 @@ class Model2d3d(nn.Module):
                 # nn.ReLU(True),
                 nn.Dropout3d(0.2)
             )
-            self.classifier = nn.Sequential(
+        
+        self.semanticClassifier = nn.Sequential(
+            nn.Linear(self.nf2 * 54, self.bf),
+            nn.ReLU(True),
+            nn.Dropout(0.5),
+            nn.Linear(self.bf, num_classes*column_height)
+        )
+        self.train_scan_completion = train_scan_completion
+        if self.train_scan_completion:
+            self.scanClassifier = nn.Sequential(
                 nn.Linear(self.nf2 * 54, self.bf),
                 nn.ReLU(True),
                 nn.Dropout(0.5),
-                nn.Linear(self.bf, num_classes * column_height)
+                nn.Linear(self.bf, 3*column_height)  # 3 represents voxel grid occupancy values
             )
 
     def forward(self, volume, image_features, projection_indices_3d, projection_indices_2d, volume_dims):
@@ -193,6 +196,11 @@ class Model2d3d(nn.Module):
         x = torch.cat([volume, image_features], 1)
         x = self.features(x)
         x = x.view(batch_size, self.nf2 * 54)
-        x = self.classifier(x)
-        x = x.view(batch_size, self.grid_dims[2], self.num_classes)
-        return x
+        semantic_output = self.semanticClassifier(x)
+        semantic_output = semantic_output.view(batch_size, self.grid_dims[2], self.num_classes)
+        scan_output = None
+        if self.train_scan_completion:
+            scan_output = self.scanClassifier(x)
+            # scan_output - [batch_size, 62, 2]
+            scan_output = scan_output.view(batch_size, self.grid_dims[2], 3)  # 3 represents voxel grid occupancy values
+        return semantic_output, scan_output
