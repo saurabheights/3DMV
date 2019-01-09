@@ -12,7 +12,7 @@ import gc
 
 
 def load_hdf5_data(filename, num_classes, h5py_index):
-    assert os.path.isfile(filename)
+    assert os.path.isfile(filename), filename
     gc.collect()
 
     NUM_TO_LOAD=1000

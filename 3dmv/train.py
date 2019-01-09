@@ -356,8 +356,10 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
             # ToDo: Note using same optimizer for both branches. Is there a need for different optimizers?
             optimizer.zero_grad()
             optimizer2d.zero_grad()
-            # ToDo: Should retain be disabled when not using proxy loss. Reduces mem consumption.
-            loss.backward(retain_graph=True)
+            if opt.use_proxy_loss:
+                loss.backward(retain_graph=True)
+            else:
+                loss.backward()
             optimizer.step()
             # optimizer2d.step is probably required even when use_proxy_loss is False, since backprojection layer is
             # differentiable, allowing us to backpropagate the gradients to 2d model from model(3D).

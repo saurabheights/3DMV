@@ -14,7 +14,7 @@ def write_array_to_file(tensor, filename):
 
 
 def read_lines_from_file(filename):
-    assert os.path.isfile(filename)
+    assert os.path.isfile(filename), filename
     lines = open(filename).read().splitlines()
     return lines
 
