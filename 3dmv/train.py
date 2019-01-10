@@ -12,6 +12,7 @@ import util
 from enet import create_enet_for_3d
 from model import Model2d3d
 from projection import ProjectionHelper
+import shutil
 
 ENET_TYPES = {'scannet': (41, [0.496342, 0.466664, 0.440796], [0.277856, 0.28623, 0.291129])}  # classes, color mean/std
 
@@ -22,6 +23,8 @@ parser.add_argument('--train_data_list', required=True, help='path to file list 
 parser.add_argument('--train_data_list_rootdir', required=True, help='path to root input_dir of paths in h5 train data filelist')
 parser.add_argument('--val_data_list', default='', help='path to file list of h5 val data')
 parser.add_argument('--output', default='./logs', help='folder to output model checkpoints')
+# Collab sometimes ends before the runtime, causing loss of all the models and logs file
+parser.add_argument('--drive', default='', help='folder to upload model checkpoints on mounted google drive')
 parser.add_argument('--data_path_2d', required=True, help='path to 2d train data')
 parser.add_argument('--class_weight_file', default='', help='path to histogram over classes')
 # train params
@@ -659,21 +662,29 @@ def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_fil
 def main():
     if not os.path.exists(opt.output):
         os.makedirs(opt.output)
+    if not os.path.exists(opt.drive):
+        os.makedirs(opt.drive)
+
+    # Log files to upload to google drive as well at the end of each epoch
+    files_upload_names_list = list()
 
     # ToDo: Reduce the below log files code as done for log_file.close at the end.
-    log_file_semantic = open(os.path.join(opt.output, 'log_train.csv'), 'w')
+    log_file_semantic = open(os.path.join(opt.output, 'log_semantic_train.csv'), 'w')
+    files_upload_names_list.append('log_semantic_train.csv')
     log_file_semantic.write(_SPLITTER.join(['epoch', 'iter', 'loss', 'avg acc', 'instance acc', 'time']) + '\n')
     log_file_semantic.flush()
 
     log_file_scan = None
     if opt.train_scan_completion:
         log_file_scan = open(os.path.join(opt.output, 'log_scan_train.csv'), 'w')
+        files_upload_names_list.append('log_scan_train.csv')
         log_file_scan.write(_SPLITTER.join(['epoch', 'iter', 'loss', 'avg acc', 'instance acc', 'time']) + '\n')
         log_file_scan.flush()
 
     log_file_2d = None
     if opt.use_proxy_loss:
         log_file_2d = open(os.path.join(opt.output, 'log2d_train.csv'), 'w')
+        files_upload_names_list.append('log2d_train.csv')
         log_file_2d.write(_SPLITTER.join(['epoch', 'iter', 'loss', 'avg acc', 'instance acc', 'time']) + '\n')
         log_file_2d.flush()
 
@@ -683,24 +694,30 @@ def main():
     log_file_2d_val = None
     if has_val:
         log_file_semantic_val = open(os.path.join(opt.output, 'log_semantic_val.csv'), 'w')
+        files_upload_names_list.append('log_semantic_val.csv')
         log_file_semantic_val.write(_SPLITTER.join(['epoch', 'iter', 'loss', 'avg acc', 'instance acc', 'time']) + '\n')
         log_file_semantic_val.flush()
 
         if opt.train_scan_completion:
             log_file_scan_val = open(os.path.join(opt.output, 'log_scan_val.csv'), 'w')
+            files_upload_names_list.append('log_scan_val.csv')
             log_file_scan_val.write(_SPLITTER.join(['epoch', 'iter', 'loss', 'avg acc', 'instance acc', 'time']) + '\n')
             log_file_scan_val.flush()
 
         if opt.use_proxy_loss:
             log_file_2d_val = open(os.path.join(opt.output, 'log2d_val.csv'), 'w')
+            files_upload_names_list.append('log2d_val.csv')
             log_file_2d_val.write(_SPLITTER.join(['epoch', 'iter', 'loss', 'avg acc', 'instance acc', 'time']) + '\n')
             log_file_2d_val.flush()
+
+    if not opt.drive:  # Remove all elements in files_upload_src_dst_map if drive folder is not provided.
+        files_upload_names_list.clear()
 
     # Start training
     print('Starting Training...')
     iter = 0
     # Note: In 3dmv, validation is done on gap of training on 10 files which is 1/10.
-    num_files_per_val = max(round(len(train_files) / 10), 1)
+    num_files_per_val = max(round(len(train_files) / 2), 1)
     for epoch in range(opt.start_epoch, opt.start_epoch+opt.max_epoch):
         train_semantic_loss = []
         train_scan_loss = []
@@ -742,6 +759,9 @@ def main():
         if opt.use_proxy_loss:
             evaluate_confusion(confusion2d, train2d_loss, epoch, iter, -1, 'Train2d', log_file_2d, num_classes)
 
+        for file_name in files_upload_names_list:  # Copy log files to google drive
+            shutil.copyfile(os.path.join(opt.output, file_name),
+                            os.path.join(opt.drive, "epoch-%s-%s" % (epoch, file_name)))
         if has_val:
             evaluate_confusion(confusion_val, val_semantic_loss, epoch, iter, -1,
                                'ValidationSemantic', log_file_semantic_val, num_classes)
@@ -751,13 +771,22 @@ def main():
                 evaluate_confusion(confusion2d_val, val2d_loss, epoch, iter, -1, 'Validation2d', log_file_2d_val, num_classes)
 
         if not opt.train_scan_completion:
-            torch.save(model.state_dict(), os.path.join(opt.output, 'model-semantic-epoch-%s.pth' % epoch))
+            torch.save(model.state_dict(), os.path.join(opt.output, 'epoch-%s-model-semantic.pth' % epoch))
+            if opt.drive:
+                torch.save(model.state_dict(), os.path.join(opt.drive, 'epoch-%s-model-semantic_and_scan.pth' % epoch))
         else:
-            torch.save(model.state_dict(), os.path.join(opt.output, 'model-semantic_and_scan-epoch-%s.pth' % epoch))
+            torch.save(model.state_dict(), os.path.join(opt.output, 'epoch-%s-model-semantic_and_scan.pth' % epoch))
+            if opt.drive:
+                torch.save(model.state_dict(), os.path.join(opt.drive, 'epoch-%s-model-semantic_and_scan.pth' % epoch))
 
-        torch.save(model2d_trainable.state_dict(), os.path.join(opt.output, 'model2d-epoch-%s.pth' % epoch))
+        torch.save(model2d_trainable.state_dict(), os.path.join(opt.output, 'epoch-%s-model2d.pth' % epoch))
+        if opt.drive:
+            torch.save(model2d_trainable.state_dict(), os.path.join(opt.drive, 'epoch-%s-model2d.pth' % epoch))
+
         if opt.use_proxy_loss:
-            torch.save(model2d_classifier.state_dict(), os.path.join(opt.output, 'model2dc-epoch-%s.pth' % epoch))
+            torch.save(model2d_classifier.state_dict(), os.path.join(opt.output, 'epoch-%s-model2dc.pth' % epoch))
+            if opt.drive:
+                torch.save(model2d_classifier.state_dict(), os.path.join(opt.drive, 'epoch-%s-model2dc.pth' % epoch))
         confusion.reset()
         confusion_val.reset()
         confusion_scan.reset()
