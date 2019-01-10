@@ -23,12 +23,14 @@ class Model2d3d(nn.Module):
         self.nf0 = 32
         self.nf1 = 64
         self.nf2 = 128
-        self.bf = 1024
+        self.bf_semantic = 1024
+        self.bf_scan = 256
         if use_smaller_model:
             self.nf0 = 32
             self.nf1 = 48
             self.nf2 = 64
-            self.bf = 512
+            self.bf_semantic = 512
+            self.bf_scan = 128
         column_height = grid_dims[2]
         self.pooling = nn.MaxPool1d(kernel_size=num_images)
         if not use_smaller_model:
@@ -158,18 +160,18 @@ class Model2d3d(nn.Module):
             )
         
         self.semanticClassifier = nn.Sequential(
-            nn.Linear(self.nf2 * 54, self.bf),
+            nn.Linear(self.nf2 * 54, self.bf_semantic),
             nn.ReLU(True),
             # nn.Dropout(0.5), # ToDO: Test with dropout when increasing size.
-            nn.Linear(self.bf, num_classes*column_height)
+            nn.Linear(self.bf_semantic, num_classes * column_height)
         )
         self.train_scan_completion = train_scan_completion
         if self.train_scan_completion:
             self.scanClassifier = nn.Sequential(
-                nn.Linear(self.nf2 * 54, self.bf),
+                nn.Linear(self.nf2 * 54, self.bf_scan),
                 nn.ReLU(True),
                 # nn.Dropout(0.5),
-                nn.Linear(self.bf, 3*column_height)  # 3 represents voxel grid occupancy values
+                nn.Linear(self.bf_scan, 3 * column_height)  # 3 represents voxel grid occupancy values
             )
 
     def forward(self, volume, image_features, projection_indices_3d, projection_indices_2d, volume_dims):
