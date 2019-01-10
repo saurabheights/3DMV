@@ -19,7 +19,7 @@ ENET_TYPES = {'scannet': (41, [0.496342, 0.466664, 0.440796], [0.277856, 0.28623
 parser = argparse.ArgumentParser()
 # data paths
 parser.add_argument('--train_data_list', required=True, help='path to file list of h5 train data')
-parser.add_argument('--train_data_list_rootdir', required=True, help='path to root dir of paths in h5 train data filelist')
+parser.add_argument('--train_data_list_rootdir', required=True, help='path to root input_dir of paths in h5 train data filelist')
 parser.add_argument('--val_data_list', default='', help='path to file list of h5 val data')
 parser.add_argument('--output', default='./logs', help='folder to output model checkpoints')
 parser.add_argument('--data_path_2d', required=True, help='path to 2d train data')
@@ -250,6 +250,7 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
             label_images = torch.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
 
         for t,v in enumerate(indices):
+            iter_start = time.time()
             # print(t, v)
             if CUDA_AVAILABLE:
                 targets_semantic = torch.autograd.Variable(labels[v].cuda())
@@ -412,7 +413,7 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
 
             # InFrequent logging stops chrome from crash[Colab] and also less strain on jupyter.
             if iter % (64 // batch_size) == 0:
-                print("Semantic: %s" % msg1)
+                print("Semantic: %s, %0.6f" % (msg1, time.time() - iter_start))
                 if opt.train_scan_completion:
                     print("Scan    : %s" % msg2)
 
