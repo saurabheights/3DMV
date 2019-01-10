@@ -418,7 +418,7 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
                     print("Scan    : %s" % msg2)
 
             iter += 1
-            if iter % (1000//batch_size) == 0:  # Save more frequently, since its Google Collaboratory.
+            if iter % (10000//batch_size) == 0:  # Save more frequently, since its Google Collaboratory.
                 # Save 3d model
                 if not opt.train_scan_completion:
                     torch.save(model.state_dict(),
@@ -449,7 +449,7 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
     took = end - start
     evaluate_confusion(confusion, train_loss_semantic, epoch, iter, took, 'TrainSemantic', log_file_semantic, num_classes)
     if opt.train_scan_completion:
-        evaluate_confusion(confusion_scan, train_loss_scan, epoch, iter, -1, 'TrainScan', log_file_scan, _NUM_OCCUPANCY_STATES)
+        evaluate_confusion(confusion_scan, train_loss_scan, epoch, iter, took, 'TrainScan', log_file_scan, _NUM_OCCUPANCY_STATES)
     if opt.use_proxy_loss:
         evaluate_confusion(confusion2d, train_loss_2d, epoch, iter, took, 'Train2d', log_file_2d, num_classes)
     return train_loss_semantic, train_loss_scan, iter, train_loss_2d
