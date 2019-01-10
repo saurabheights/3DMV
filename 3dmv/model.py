@@ -106,7 +106,7 @@ class Model2d3d(nn.Module):
                 # nn.Conv3d(64, 64, kernel_size=1, stride=1, padding=0),
                 # nn.BatchNorm3d(64),
                 # nn.ReLU(True),
-                nn.Dropout3d(0.2),
+                # nn.Dropout3d(0.2),
                 # output self.nf1 x 14x7x7
                 nn.Conv3d(64, 32, kernel_size=[4, 3, 3], stride=2, padding=0),
                 nn.BatchNorm3d(32),
@@ -117,7 +117,7 @@ class Model2d3d(nn.Module):
                 # nn.Conv3d(32, 32, kernel_size=1, stride=1, padding=0),
                 # nn.BatchNorm3d(32),
                 # nn.ReLU(True),
-                nn.Dropout3d(0.2)
+                # nn.Dropout3d(0.2)
             )
             self.features3d = nn.Sequential(
                 # output self.nf0 x 30x15x15
@@ -130,7 +130,7 @@ class Model2d3d(nn.Module):
                 # nn.Conv3d(self.nf0, self.nf0, kernel_size=1, stride=1, padding=0),
                 # nn.BatchNorm3d(self.nf0),
                 # nn.ReLU(True),
-                nn.Dropout3d(0.2),
+                # nn.Dropout3d(0.2),
                 # output self.nf1 x 14x7x7
                 nn.Conv3d(self.nf0, self.nf1, kernel_size=[4, 3, 3], stride=2, padding=0),
                 nn.BatchNorm3d(self.nf1),
@@ -141,7 +141,7 @@ class Model2d3d(nn.Module):
                 # nn.Conv3d(self.nf1, self.nf1, kernel_size=1, stride=1, padding=0),
                 # nn.BatchNorm3d(self.nf1),
                 # nn.ReLU(True),
-                nn.Dropout3d(0.2)
+                # nn.Dropout3d(0.2)
             )
             self.features = nn.Sequential(
                 # output self.nf2 x 6x3x3
@@ -154,13 +154,13 @@ class Model2d3d(nn.Module):
                 # nn.Conv3d(self.nf2, self.nf2, kernel_size=1, stride=1, padding=0),
                 # nn.BatchNorm3d(self.nf2),
                 # nn.ReLU(True),
-                nn.Dropout3d(0.2)
+                # nn.Dropout3d(0.2)
             )
         
         self.semanticClassifier = nn.Sequential(
             nn.Linear(self.nf2 * 54, self.bf),
             nn.ReLU(True),
-            nn.Dropout(0.5),
+            # nn.Dropout(0.5), # ToDO: Test with dropout when increasing size.
             nn.Linear(self.bf, num_classes*column_height)
         )
         self.train_scan_completion = train_scan_completion
@@ -168,7 +168,7 @@ class Model2d3d(nn.Module):
             self.scanClassifier = nn.Sequential(
                 nn.Linear(self.nf2 * 54, self.bf),
                 nn.ReLU(True),
-                nn.Dropout(0.5),
+                # nn.Dropout(0.5),
                 nn.Linear(self.bf, 3*column_height)  # 3 represents voxel grid occupancy values
             )
 
