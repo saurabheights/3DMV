@@ -4,7 +4,14 @@ import os
 from laplotter import LossAccPlotter
 
 input_dir = "/home/sk/windows/workspace/ADLCV/3DMV-colab/3dmv/logs/OverfitOnFourVolumetricGrids"
-filesNames = ["log_train.csv", "log_scan_train.csv", "log_semantic_val.csv", "log_scan_val.csv"]
+input_dir = "/home/sk/windows/workspace/ADLCV/3DMV-colab/3dmv/logs/Scan_bs_32_Train_4Files_NearImg_1_Faster_NoDropOut_ScanFC_128_ScanBugFix"
+filesNames = ["epoch-%d-log_semantic_train.csv",
+              "epoch-%d-log_scan_train.csv",
+              "epoch-%d-log_semantic_val.csv",
+              "epoch-%d-log_scan_val.csv"]
+
+epoch = 2
+filesNames = [filesName % epoch for filesName in filesNames]
 
 
 def read_loss_and_accuracy_from_csv(filenameIndex, skip_first_row=True):
@@ -25,6 +32,11 @@ def read_loss_and_accuracy_from_csv(filenameIndex, skip_first_row=True):
                             csv_data_row.append(int(item))
                         else:
                             csv_data_row.append(float(item))
+                if len(csv_data) > 0:
+                    csv_prev_data_row = csv_data[-1]
+                    if csv_prev_data_row[1] == csv_data_row[1]:  # Ignore same iteration
+                        continue
+
                 csv_data.append(csv_data_row)
             return csv_data
     except FileNotFoundError as e:
@@ -32,11 +44,11 @@ def read_loss_and_accuracy_from_csv(filenameIndex, skip_first_row=True):
         return []
 
 
-def plot_image(title, filename, training, validation, train_vs_validation_iter_ratio):
+def plot_image(title, filename, training, validation):
     plotter = LossAccPlotter(title,
                              save_to_filepath=os.path.join(input_dir, filename),
                              show_regressions=False,
-                             show_averages=True,
+                             show_averages=False,
                              show_loss_plot=True,
                              show_acc_plot=True,
                              show_plot_window=False,
@@ -51,7 +63,7 @@ def plot_image(title, filename, training, validation, train_vs_validation_iter_r
 
         # Plot Both Training and Validation Record
         if len(validation) > next_validation_row_index_to_plot and \
-                validation[next_validation_row_index_to_plot][1] <= training_iter / train_vs_validation_iter_ratio:
+                validation[next_validation_row_index_to_plot][1] == training_iter:
             val_record = validation[next_validation_row_index_to_plot]
             next_validation_row_index_to_plot = next_validation_row_index_to_plot + 1
             loss_val = val_record[2]
@@ -61,7 +73,7 @@ def plot_image(title, filename, training, validation, train_vs_validation_iter_r
                                    loss_val=loss_val,
                                    redraw=False)
             elif len(val_record) > 3:
-                inst_acc_val = val_record[3]
+                inst_acc_val = val_record[4]
                 inst_acc_train = training_record[4]
                 plotter.add_values(training_iter,
                                    loss_train=loss_train,
@@ -94,6 +106,5 @@ training_scan = read_loss_and_accuracy_from_csv(1)
 validation_scan = read_loss_and_accuracy_from_csv(3)
 
 # LossAccPlotter uses equal iteration. Currently using
-_train_vs_validation_iter_ratio = 1.0
-plot_image('Semantic_Loss', "Semantic.jpg", training_semantic, validation_semantic, _train_vs_validation_iter_ratio)
-plot_image('Scan_Loss', "Scan.jpg", training_scan, validation_scan, _train_vs_validation_iter_ratio)
+plot_image('Semantic_Loss', "Semantic.jpg", training_semantic, validation_semantic)
+plot_image('Scan_Loss', "Scan.jpg", training_scan, validation_scan)
