@@ -6,6 +6,7 @@ import time
 import numpy as np
 import torch
 import torchnet as tnt
+from tensorboardX import SummaryWriter
 
 import data_util
 import util
@@ -88,6 +89,11 @@ else:
 # Note: This may fail if random is called globally in  any project files which are imported above.
 if opt.manualSeed is None:
     opt.manualSeed = random.randint(0, 99999)
+
+# Create summary writer
+summary_path=os.path.join(opt.output, 'summary')
+os.makedirs(summary_path, exist_ok=True)
+summary_writer = SummaryWriter(log_dir=summary_path)
 
 print('Using Random Seed value as: %d' % opt.manualSeed)
 torch.manual_seed(opt.manualSeed)  # Set for pytorch, used for cuda as well.
@@ -420,9 +426,11 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
             # Log loss for current iteration and print every 20th turn.
             msg1 = _SPLITTER.join([str(f) for f in [epoch, iter, loss_semantic.item()]])
             log_file_semantic.write(msg1 + '\n')
+            summary_writer.add_scalar('metrics/loss_semantic', float(msg1.split(',')[2]), iter)
             if opt.train_scan_completion:
                 msg2 = _SPLITTER.join([str(f) for f in [epoch, iter, loss_scan.item()]])
                 log_file_scan.write(msg2 + '\n')
+                summary_writer.add_scalar('metrics/loss_scan', float(msg2.split(',')[2]), iter)
 
             # InFrequent logging stops chrome from crash[Colab] and also less strain on jupyter.
             if iter % (64 // batch_size) == 0:
@@ -679,6 +687,12 @@ def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_fil
     print('Epoch: {}\tIter: {}\tLoss: {:.6f}\tAcc(inst): {:.6f}\tAcc(avg): {:.6f}\tTook: {:.2f}\t{}'.format(
         epoch, iter, loss_mean.data, instance_acc, avg_acc, time, which))
 
+    # Write summary
+    summary_writer.add_scalar('{}/loss_mean'.format(which), loss_mean.data, iter)
+    summary_writer.add_scalar('{}/instance_acc'.format(which), instance_acc, iter)
+    summary_writer.add_scalar('{}/avg_acc'.format(which), avg_acc, iter)
+    summary_writer.add_scalar('{}/time'.format(which), time, iter)
+
 
 def main():
     if not os.path.exists(opt.output):
@@ -820,6 +834,9 @@ def main():
     log_files = list(filter(lambda x: x is not None, log_files))  # Remove None
     list(map(lambda f: f.close(), log_files))
 
+    # Export scalar data to JSON
+    summary_writer.export_scalars_to_json(os.path.join(opt.output, 'all_scalars.json'))
+    summary_writer.close()
 
 if __name__ == '__main__':
     main()
