@@ -136,13 +136,11 @@ for c in range(num_classes):
 print("Criterion Weights for semantic: \n%s" % criterion_weights_semantic.numpy())
 
 # Create criterion_weights for Scan Completion
-discard_center_column_voxels = False
 if opt.train_scan_completion:
     criterion_weights_scan = torch.ones(3)
     for c in range(3):
         criterion_weights_scan[c] = 1 / np.log(1.2 + criterion_weights_scan[c])
     criterion_weights_scan[2] = 0  # ToDo: Is this required?
-    discard_center_column_voxels = True
     print("Criterion Weights for scan: \n%s" % criterion_weights_scan.numpy())
 
 if CUDA_AVAILABLE:
@@ -305,9 +303,20 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
             if not is_load_success:
                 continue
 
-            # Compute projection mapping and discard center voxels if training for scan completion
+            # 3d Input
+            volume = volumes[v]
+            # Get indices of voxels to be removed if training scan completion
+            random_center_voxel_indices = torch.Tensor()  # Empty Tensor
+            if opt.train_scan_completion:
+                # ToDo: For all sample in each batch, same random voxels are removed.
+                # ToDo: Voxel already unknown also gets removed.
+                random_center_voxel_indices = projection.get_random_center_voxels_index(opt.voxel_removal_fraction)
+                # Mark the 3D voxels as Unknown and
+                volume[:, :, random_center_voxel_indices, projection.volume_dims[0] // 2, projection.volume_dims[1] // 2] = 0
+
+            # Compute projection mapping and mark center voxels as Unknown if training for scan completion
             proj_mapping = [projection.compute_projection(d, c, t,
-                                                          discard_center_column_voxels, opt.voxel_removal_fraction)
+                                                          random_center_voxel_indices)
                             for d, c, t in zip(depth_images, camera_poses, transforms)]
             if None in proj_mapping:  # Invalid sample
                 print('No mapping in proj_mapping')
@@ -334,7 +343,7 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
                 ft2d = ft2d.permute(0, 2, 3, 1).contiguous()
 
             # 2d/3d
-            input3d = torch.autograd.Variable(volumes[v])
+            input3d = torch.autograd.Variable(volume)
             if CUDA_AVAILABLE:
                 input3d = input3d.cuda()
 
@@ -552,10 +561,21 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
                 if not is_load_success:
                     continue
 
-                # Compute projection mapping and discard center voxels if training for scan completion
-                proj_mapping = [projection.compute_projection(d, c, t,
-                                                              discard_center_column_voxels,
-                                                              opt.voxel_removal_fraction)
+                # 3d Input
+                volume = volumes[v]
+                # Get indices of voxels to be removed if training scan completion
+                random_center_voxel_indices = torch.Tensor()  # Empty Tensor
+                if opt.train_scan_completion:
+                    # ToDo: For all sample in each batch, same random voxels are removed.
+                    # ToDo: Voxel already unknown also gets removed.
+                    random_center_voxel_indices = projection.get_random_center_voxels_index(
+                        opt.voxel_removal_fraction)
+                    # Mark the 3D voxels as Unknown and
+                    volume[:, :, random_center_voxel_indices, projection.volume_dims[0] // 2,
+                    projection.volume_dims[1] // 2] = 0
+
+                # Compute projection mapping and mark center voxels as Unknown if training for scan completion
+                proj_mapping = [projection.compute_projection(d, c, t, random_center_voxel_indices)
                                 for d, c, t in zip(depth_images, camera_poses, transforms)]
                 if None in proj_mapping:
                     print('No mapping in proj_mapping')
@@ -583,9 +603,9 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
 
                 # 2d/3d
                 if CUDA_AVAILABLE:
-                    input3d = volumes[v].cuda()
+                    input3d = volume.cuda()
                 else:
-                    input3d = volumes[v]
+                    input3d = volume
 
                 # Forward Pass Only
                 output_semantic, output_scan = model(input3d, imageft, proj_ind_3d, proj_ind_2d, grid_dims)

@@ -12,6 +12,8 @@ class ProjectionHelper():
         self.image_dims = image_dims
         self.volume_dims = volume_dims
         self.voxel_size = voxel_size
+        self.center_voxel_begin = self.volume_dims[0] * self.volume_dims[1] // 2
+        self.step_size = self.volume_dims[0] * self.volume_dims[1]
 
 
     def depth_to_skeleton(self, ux, uy, depth):
@@ -50,8 +52,19 @@ class ProjectionHelper():
         bbox_max = np.maximum(bbox_max0, bbox_max1)
         return bbox_min, bbox_max
 
-    def compute_projection(self, depth, camera_to_world, world_to_grid,
-                           discard_center_column_voxels, voxel_removal_fraction):
+    def get_random_center_voxels_index(self, voxel_removal_fraction):
+        num_of_indices_to_discard = round(voxel_removal_fraction * self.volume_dims[2])
+        # ToDo: Minor Bug: Only known voxels should be discarded.
+        if num_of_indices_to_discard > 0:
+            random_center_voxel_indices = torch.randperm(self.volume_dims[2]).long()
+            random_center_voxel_indices = random_center_voxel_indices[:num_of_indices_to_discard]
+            return random_center_voxel_indices
+        else:
+            return torch.Tensor()
+
+    def compute_projection(self,
+                           depth, camera_to_world, world_to_grid,
+                           random_center_voxel_indices):
         # compute projection by voxels -> image
         try:
             if np.linalg.matrix_rank(camera_to_world) != 4:
@@ -112,18 +125,13 @@ class ProjectionHelper():
                               torch.lt(coords[1], voxel_bounds_max[1]) * \
                               torch.lt(coords[2], voxel_bounds_max[2])
 
-        if discard_center_column_voxels:
-            center_voxel_begin = self.volume_dims[0]*self.volume_dims[1]//2
-            step_size = self.volume_dims[0]*self.volume_dims[1]
-            random_center_voxel_indices = torch.randperm(self.volume_dims[2]).long()
-            num_of_indices_to_discard = round(voxel_removal_fraction * self.volume_dims[2])
-            # ToDo: Minor Bug: Only known voxels should be discarded.
-            if num_of_indices_to_discard > 0:
-                random_center_voxel_indices = random_center_voxel_indices[:num_of_indices_to_discard]
-                # for i in range(self.volume_dims[2]):
-                #     mask_frustum_bounds[center_voxel_begin + i * step_size] = 0
-                random_center_voxel_indices = center_voxel_begin + random_center_voxel_indices * step_size
-                mask_frustum_bounds[random_center_voxel_indices] = 0
+        # remove 2d depth mappings
+        if random_center_voxel_indices.nelement() > 0:
+            # Setting mask to zero, will discard the corresponding depth pixels below.
+
+            # for i in range(self.volume_dims[2]):
+            #     mask_frustum_bounds[center_voxel_begin + i * step_size] = 0
+            mask_frustum_bounds[self.center_voxel_begin + random_center_voxel_indices * self.step_size] = 0
 
         if not mask_frustum_bounds.any():
             print('error: nothing in frustum bounds')
