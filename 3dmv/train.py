@@ -682,7 +682,7 @@ def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_fil
 def main():
     if not os.path.exists(opt.output):
         os.makedirs(opt.output)
-    if not os.path.exists(opt.drive):
+    if opt.drive and not os.path.exists(opt.drive):
         os.makedirs(opt.drive)
 
     # Log files to upload to google drive as well at the end of each epoch
