@@ -179,6 +179,7 @@ val_files = [os.path.join(opt.train_data_list_rootdir, x) for x in val_files]  #
 print('#train files = %d' % (len(train_files)))
 print('#val files = %d' % (len(val_files)))
 
+# ToDo: Remove global variables. Causes more bug due to multiple variables with same name.
 _NUM_OCCUPANCY_STATES = 3
 _SPLITTER = ','
 confusion = tnt.meter.ConfusionMeter(num_classes)
@@ -664,7 +665,7 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
 def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_file, _num_classes):
     conf = confusion_matrix.value()
     total_correct = 0
-    valids = np.zeros(num_classes, dtype=np.float32)
+    valids = np.zeros(_num_classes, dtype=np.float32)
     for c in range(_num_classes):
         num = conf[c,:].sum()
         valids[c] = -1 if num == 0 else float(conf[c][c]) / float(num)
