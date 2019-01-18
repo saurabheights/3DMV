@@ -99,21 +99,22 @@ model2d_trainable.load_state_dict(torch.load(model2dt_path))
 model = Model2d3d(num_classes, num_images, intrinsic, proj_image_dims, grid_dims,
                   opt.depth_min, opt.depth_max, opt.voxel_size, opt.use_smaller_model, opt.test_scan_completion)
 
-model_dict = torch.load(opt.model_path, map_location=lambda storage, loc: storage)
-
-
 # Fix Keys due to change in original network by Angela Dai
-def change_model_keys_name(model_dict: OrderedDict):
-    # "classifier.0.weight" -> "semanticClassifier.0.weight"
-    # "classifier.0.bias"   -> "semanticClassifier.0.bias"
-    # "classifier.3.weight" -> "semanticClassifier.2.weight"
-    # "classifier.3.bias"   -> "semanticClassifier.2.bias"
-    model_key_mappings = {
-        "classifier.0.weight": "semanticClassifier.0.weight",
-        "classifier.0.bias": "semanticClassifier.0.bias",
-        "classifier.3.weight": "semanticClassifier.2.weight",
-        "classifier.3.bias": "semanticClassifier.2.bias",
-    }
+def change_model_keys_name(model_dict: OrderedDict, using_smaller_model):
+    if using_smaller_model:
+        model_key_mappings = {
+            "classifier.0.weight": "semanticClassifier.0.weight",
+            "classifier.0.bias": "semanticClassifier.0.bias",
+            "classifier.3.weight": "semanticClassifier.2.weight",  # Smaller Model has no dropout layer
+            "classifier.3.bias": "semanticClassifier.2.bias",
+        }
+    else:
+        model_key_mappings = {
+            "classifier.0.weight": "semanticClassifier.0.weight",
+            "classifier.0.bias": "semanticClassifier.0.bias",
+            "classifier.3.weight": "semanticClassifier.3.weight",
+            "classifier.3.bias": "semanticClassifier.3.bias",
+        }
     new_model_dict = OrderedDict()
     for k, v in model_dict.items():
         if k in model_key_mappings.keys():
@@ -122,14 +123,15 @@ def change_model_keys_name(model_dict: OrderedDict):
             new_model_dict[k] = v
     return new_model_dict
 
-
-model_dict = change_model_keys_name(model_dict)
+model_dict = torch.load(opt.model_path, map_location=lambda storage, loc: storage)
+model_dict = change_model_keys_name(model_dict, opt.use_smaller_model)
 model.load_state_dict(model_dict)
 
 print(model)
 
 # move to gpu
 if CUDA_AVAILABLE:
+    print("Using GPU")
     model = model.cuda()
     model.eval()
     model2d_fixed = model2d_fixed.cuda()
@@ -264,18 +266,29 @@ def test(scene_name, eval_file):
         sys.stdout.flush()
     sys.stdout.write('\n')
 
-    # Compute the final predictions, discard predictions for the unknown voxels and save to a file.
+    files_upload_names_list = []
     pred_semantic_label = np.argmax(output_semantic_probs, axis=0)
-    mask = np.equal(scene_occ[0], 1)
-    pred_semantic_label[np.logical_not(mask)] = 0
-    filename = scene_name + '_semantic.bin'
-    util.write_array_to_file(pred_semantic_label.astype(np.uint8),
-                             os.path.join(opt.output_path, scene_name + '_semantic.bin'))
-    files_upload_names_list = [filename]
+
+    # Compute the final predictions for all the known-occupied voxels and save to a file.
+    all_known_voxels = np.equal(scene_occ[1], 1)
+    pred_semantic_label_all_known = np.array(pred_semantic_label, copy=True)
+    pred_semantic_label_all_known[np.logical_not(all_known_voxels)] = 0
+    util.write_array_to_file(pred_semantic_label_all_known.astype(np.uint8),
+                             os.path.join(opt.output_path, scene_name + '_semantic_AllKnownVoxels.bin'))
+    files_upload_names_list.append(scene_name + '_semantic_AllKnownVoxels.bin')
+
+    # Compute the final predictions, discard predictions for the unknown voxels and save to a file.
+    mask_semantic_known_occupied = np.equal(scene_occ[0], 1)  # Only on voxels near the surface
+    pred_semantic_label_all_known = np.array(pred_semantic_label, copy=True)  # Redundant copy
+    pred_semantic_label_all_known[np.logical_not(mask_semantic_known_occupied)] = 0
+    util.write_array_to_file(pred_semantic_label_all_known.astype(np.uint8),
+                             os.path.join(opt.output_path, scene_name + '_semantic_KnownOccupiedOnly.bin'))
+    files_upload_names_list.append(scene_name + '_semantic_KnownOccupiedOnly.bin')
 
     if opt.test_scan_completion:
         pred_scan_label = np.argmax(output_scan_probs, axis=0)
-        pred_scan_label[np.logical_not(mask)] = 0
+        # On Known-Free and Known-Occupied voxels. Discard Unknown.
+        pred_scan_label[np.logical_not(all_known_voxels)] = 0
         filename = scene_name + '_scan.bin'
         util.write_array_to_file(pred_scan_label.astype(np.uint8), os.path.join(opt.output_path, filename))
         files_upload_names_list.append(filename)

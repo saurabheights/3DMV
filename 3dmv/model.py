@@ -158,21 +158,36 @@ class Model2d3d(nn.Module):
                 # nn.ReLU(True),
                 # nn.Dropout3d(0.2)
             )
-        
-        self.semanticClassifier = nn.Sequential(
-            nn.Linear(self.nf2 * 54, self.bf_semantic),
-            nn.ReLU(True),
-            # nn.Dropout(0.5), # ToDO: Test with dropout when increasing size.
-            nn.Linear(self.bf_semantic, num_classes * column_height)
-        )
+
         self.train_scan_completion = train_scan_completion
-        if self.train_scan_completion:
-            self.scanClassifier = nn.Sequential(
-                nn.Linear(self.nf2 * 54, self.bf_scan),
+
+        if not use_smaller_model:
+            self.semanticClassifier = nn.Sequential(
+                nn.Linear(self.nf2 * 54, self.bf_semantic),
                 nn.ReLU(True),
-                # nn.Dropout(0.5),
-                nn.Linear(self.bf_scan, 3 * column_height)  # 3 represents voxel grid occupancy values
+                nn.Dropout(0.5),
+                nn.Linear(self.bf_semantic, num_classes * column_height)
             )
+            if self.train_scan_completion:
+                self.scanClassifier = nn.Sequential(
+                    nn.Linear(self.nf2 * 54, self.bf_scan),
+                    nn.ReLU(True),
+                    nn.Dropout(0.5),
+                    nn.Linear(self.bf_scan, 3 * column_height)  # 3 represents voxel grid occupancy values
+                )
+        else:
+            self.semanticClassifier = nn.Sequential(
+                nn.Linear(self.nf2 * 54, self.bf_semantic),
+                nn.ReLU(True),
+                nn.Linear(self.bf_semantic, num_classes * column_height)
+            )
+            if self.train_scan_completion:
+                self.scanClassifier = nn.Sequential(
+                    nn.Linear(self.nf2 * 54, self.bf_scan),
+                    nn.ReLU(True),
+                    nn.Linear(self.bf_scan, 3 * column_height)  # 3 represents voxel grid occupancy values
+                )
+
 
     def forward(self, volume, image_features, projection_indices_3d, projection_indices_2d, volume_dims):
         assert len(volume.shape) == 5 and len(image_features.shape) == 4
