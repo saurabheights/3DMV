@@ -282,7 +282,7 @@ def test(scene_name, eval_file):
 
     if opt.drive:
         for file_name in files_upload_names_list:  # Copy scene prediction files to google drive
-            shutil.copyfile(os.path.join(opt.output, file_name), os.path.join(opt.drive, file_name))
+            shutil.copyfile(os.path.join(opt.output_path, file_name), os.path.join(opt.drive, file_name))
 
     # ToDo: Implement evaluation for scan completion. Synthetic Data such as SunCG will be helpful here.
     eval_semantic_scene = None
