@@ -64,7 +64,7 @@ class ProjectionHelper():
 
     def compute_projection(self,
                            depth, camera_to_world, world_to_grid,
-                           random_center_voxel_indices):
+                           center_voxel_indices_to_skip=None):
         # compute projection by voxels -> image
         try:
             if np.linalg.matrix_rank(camera_to_world) != 4:
@@ -126,12 +126,12 @@ class ProjectionHelper():
                               torch.lt(coords[2], voxel_bounds_max[2])
 
         # remove 2d depth mappings
-        if random_center_voxel_indices.nelement() > 0:
+        if center_voxel_indices_to_skip and center_voxel_indices_to_skip.nelement() > 0:
             # Setting mask to zero, will discard the corresponding depth pixels below.
 
             # for i in range(self.volume_dims[2]):
             #     mask_frustum_bounds[center_voxel_begin + i * step_size] = 0
-            mask_frustum_bounds[self.center_voxel_begin + random_center_voxel_indices * self.step_size] = 0
+            mask_frustum_bounds[self.center_voxel_begin + center_voxel_indices_to_skip * self.step_size] = 0
 
         if not mask_frustum_bounds.any():
             print('error: nothing in frustum bounds')

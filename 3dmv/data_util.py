@@ -1,14 +1,14 @@
-import os, struct, math
-import random
+import gc
+import math
+import os
+import struct
 
 import h5py
 import numpy as np
-from scipy import misc
-from PIL import Image
 import torch
 import torchvision.transforms as transforms
-
-import gc
+from PIL import Image
+from scipy import misc
 
 
 def load_hdf5_data(filename, num_classes, h5py_index):
@@ -69,7 +69,7 @@ def load_depth_label_pose(depth_file, color_file, pose_file, depth_image_dims, c
     depth_image = resize_crop_image(depth_image, depth_image_dims)
     color_image = resize_crop_image(color_image, color_image_dims)
     depth_image = depth_image.astype(np.float32) / 1000.0
-    color_image =  np.transpose(color_image, [2, 0, 1])  # move feature to front
+    color_image = np.transpose(color_image, [2, 0, 1])  # move feature to front
     color_image = normalize(torch.Tensor(color_image.astype(np.float32) / 255.0))
     return depth_image, color_image, pose
 
@@ -93,8 +93,8 @@ def load_scene(filename, num_classes, load_gt):
     if load_gt:
         labels = np.asarray(labels, dtype=np.uint8).reshape([depth, height, width])
     occ = np.ndarray((2, depth, height, width), np.dtype('B')) #occupancy grid for occupied/empty space, known/unknown space
-    occ[0] = np.less_equal(np.abs(sdfs), 1)
-    occ[1] = np.greater_equal(sdfs, -1)
+    occ[0] = np.less_equal(np.abs(sdfs), 1)  # 0 = A Voxel Away, 1 = Within A Voxel Distance
+    occ[1] = np.greater_equal(sdfs, -1)      # 0 = At least one voxel behind the surface.
     if load_gt:
         # ensure occupied space has non-zero labels
         labels[np.logical_and(np.equal(occ[0], 1), np.equal(labels, 0))] = num_classes - 1

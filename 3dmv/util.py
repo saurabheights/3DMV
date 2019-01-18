@@ -1,7 +1,7 @@
-
 import os, struct, math
 import numpy as np
 import torch
+
 
 # util for saving tensors, for debug purposes
 def write_array_to_file(tensor, filename):
@@ -34,21 +34,22 @@ def adjust_intrinsic(intrinsic, intrinsic_image_dim, image_dim):
     if intrinsic_image_dim == image_dim:
         return intrinsic
     resize_width = int(math.floor(image_dim[1] * float(intrinsic_image_dim[0]) / float(intrinsic_image_dim[1])))
-    intrinsic[0,0] *= float(resize_width)/float(intrinsic_image_dim[0])
-    intrinsic[1,1] *= float(image_dim[1])/float(intrinsic_image_dim[1])
+    intrinsic[0, 0] *= float(resize_width) / float(intrinsic_image_dim[0])
+    intrinsic[1, 1] *= float(image_dim[1]) / float(intrinsic_image_dim[1])
     # account for cropping here
-    intrinsic[0,2] *= float(image_dim[0]-1)/float(intrinsic_image_dim[0]-1)
-    intrinsic[1,2] *= float(image_dim[1]-1)/float(intrinsic_image_dim[1]-1)
+    intrinsic[0, 2] *= float(image_dim[0] - 1) / float(intrinsic_image_dim[0] - 1)
+    intrinsic[1, 2] *= float(image_dim[1] - 1) / float(intrinsic_image_dim[1] - 1)
     return intrinsic
 
 
 def get_sample_files(samples_path):
-    files = [f for f in os.listdir(samples_path) if f.endswith('.sample')] #and os.path.isfile(join(samples_path, f))]
+    files = [f for f in os.listdir(samples_path) if f.endswith('.sample')]  # and os.path.isfile(join(samples_path, f))]
     return files
 
 
 def get_sample_files_for_scene(scene, samples_path):
-    files = [f for f in os.listdir(samples_path) if f.startswith(scene) and f.endswith('.sample')] #and os.path.isfile(join(samples_path, f))]
+    files = [f for f in os.listdir(samples_path) if
+             f.startswith(scene) and f.endswith('.sample')]  # and os.path.isfile(join(samples_path, f))]
     print('found %d for %s' % (len(files), os.path.join(samples_path, scene)))
     return files
 
@@ -57,7 +58,7 @@ def load_pose(filename):
     assert os.path.isfile(filename)
     lines = open(filename).read().splitlines()
     assert len(lines) == 4
-    lines = [[x[0],x[1],x[2],x[3]] for x in (x.split(" ") for x in lines)]
+    lines = [[x[0], x[1], x[2], x[3]] for x in (x.split(" ") for x in lines)]
     return torch.from_numpy(np.asarray(lines).astype(np.float32))
 
 
