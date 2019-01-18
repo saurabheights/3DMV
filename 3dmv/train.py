@@ -48,7 +48,7 @@ parser.add_argument('--use_proxy_loss', dest='use_proxy_loss', action='store_tru
 parser.add_argument('--use_smaller_model', dest='use_smaller_model', action='store_true')
 parser.add_argument('--train_scan_completion', dest='train_scan_completion', action='store_true',
                     help='train scan completion branch')
-parser.add_argument('--voxel_removal_fraction', dest='voxel_removal_fraction', default=0.25,
+parser.add_argument('--voxel_removal_fraction', dest='voxel_removal_fraction', default=0.5,
                     help='% of voxels to remove from center column')
 
 # 2d/3d
@@ -137,10 +137,14 @@ print("Criterion Weights for semantic: \n%s" % criterion_weights_semantic.numpy(
 
 # Create criterion_weights for Scan Completion
 if opt.train_scan_completion:
-    criterion_weights_scan = torch.ones(3)
-    for c in range(3):
+    criterion_weights_scan = torch.zeros(3)
+    criterion_weights_scan[0] = 1.0
+    criterion_weights_scan[1] = 10.0
+    criterion_weights_scan[2] = 0
+    # Normalize as done for semantic. Keep a good balance between loss of both semantic and scan.
+    criterion_weights_scan = criterion_weights_scan / torch.sum(criterion_weights_scan)
+    for c in range(3):  # Not Used, What is 1.2 for?
         criterion_weights_scan[c] = 1 / np.log(1.2 + criterion_weights_scan[c])
-    criterion_weights_scan[2] = 0  # ToDo: Is this required?
     print("Criterion Weights for scan: \n%s" % criterion_weights_scan.numpy())
 
 if CUDA_AVAILABLE:
@@ -288,6 +292,9 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
 
                 # ToDo: What if you generate targets_scan from volumetric grid?
                 # ToDo: You should get the same result but confirm.
+                # Semantic 0 is Scan 0
+                # Semantic 1-40 is Scan 1
+                # Semantic 41 is Scan 2
                 targets_scan = targets_semantic.view(-1).data.clone()
                 targets_scan[torch.ge(targets_scan, 1) * torch.lt(targets_scan, num_classes-1)] = 1
                 targets_scan[torch.eq(targets_scan, num_classes - 1)] = 2  # Label 41 with class 2
