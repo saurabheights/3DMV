@@ -2,6 +2,7 @@ import argparse
 import os
 import random
 import time
+from math import sqrt
 
 import numpy as np
 import torch
@@ -478,11 +479,88 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
     return train_loss_semantic, train_loss_scan, iter, train_loss_2d
 
 
+def compute_l1_error(batch_volume, batch_targets_scan, batch_predictions_scan):
+    batch_size = batch_volume.shape[0]
+    column_height = batch_volume.shape[2]
+    batch_targets_scan = batch_targets_scan.data.clone().view(-1, column_height)
+    batch_predictions_scan = batch_predictions_scan.data.clone().view(-1, column_height)
+    l1_errors = []
+    voxel_in_z_plane = grid_dims[0] * grid_dims[1]
+    for i in range(batch_size):
+        volume = batch_volume[i]
+        targets_scan = batch_targets_scan[i]
+        predictions_scan = batch_predictions_scan[i]
+
+        full_grid_targets_scan = torch.IntTensor(volume[0].shape) # 62 x 31 x 31
+        if CUDA_AVAILABLE:
+            full_grid_targets_scan = full_grid_targets_scan.cuda()
+        full_grid_targets_scan[:] = 2
+        occ0 = volume[0, :, :, :]
+        occ1 = volume[1, :, :, :]
+
+        #                           occ0  occ1
+        # Known-Free Space :           0,    1     (2) - Target = 0
+        # Known-Occupied Space :       1,    1     (3) - Target = 1
+        # Unknown Space:               0,    0     (0) - Target = 2
+        full_grid_targets_scan[torch.eq(occ0, 1) * torch.eq(occ1, 1)] = 1
+        full_grid_targets_scan[torch.eq(occ0, 0) * torch.eq(occ1, 1)] = 0
+
+        # Nearest Neighbor GPU Implementation:
+        #       Target->    Known-Free                      Known-Occupied              Unknown
+        # Prediction
+        # Known-Free            0                   Find dist of NN of KF in Target     Ignore
+        # Known-Occupied   Find dist of NN of KO in Target      0                       Ignore
+        # Unknown           ==================Never Happens By Architecture Design==================
+
+        lin_ind_volume = torch.arange(0, volume[0].nelement(), out=torch.LongTensor())
+        coords = torch.LongTensor(3, lin_ind_volume.size(0))
+        if CUDA_AVAILABLE:
+            lin_ind_volume = lin_ind_volume.cuda()
+            coords = coords.cuda()
+        coords[2] = lin_ind_volume / voxel_in_z_plane  # Z
+        tmp = lin_ind_volume - (voxel_in_z_plane * coords[2]).long()
+        coords[1] = tmp / grid_dims[0]  # Y
+        coords[0] = torch.remainder(tmp, grid_dims[0])  # X
+        delta_coords = coords.clone()  # Clone since z value will change for each time NN lookup is done for a voxel
+        delta_coords[0].sub_(grid_centerX)  # Only Z value changes for each voxel, just compute delta X
+        delta_coords[0].mul_(delta_coords[0]) # Square the distance
+        delta_coords[1].sub_(grid_centerY)  # Only Z value changes for each voxel, just compute delta Y
+        delta_coords[1].mul_(delta_coords[1]) # Square the distance
+
+        # Compute L1 Loss for each index
+        valid_voxel_count = 0  # This represents voxels where target voxel is Known
+        for z_index in range(0, column_height):
+            l1_error = 0.0
+            perform_nn_search = False
+            if predictions_scan[z_index] == 0 and targets_scan[z_index] == 1: # Find dist of Nearest Neighbor of Known-Free in full_grid_targets_scan
+                perform_nn_search = True
+                voxel_type_to_search = predictions_scan[z_index].int()
+            elif predictions_scan[z_index] == 1 and targets_scan[z_index] == 0: # Find dist of Nearest Neighbor of Known-Occupied in full_grid_targets_scan
+                perform_nn_search = True
+                voxel_type_to_search = predictions_scan[z_index].int()
+            elif targets_scan[z_index] != 2:
+                valid_voxel_count += 1
+            elif predictions_scan[z_index] == 2:
+                print('ERROR - Should never happen by design.')
+
+            # Do Brute Force NN. Check only where voxels are known.
+            if perform_nn_search:
+                delta_coords[2] = coords[2] - z_index
+                delta_coords[2].mul_(delta_coords[2])  # Square the distance
+                delta_coords[2].add_(delta_coords[0]).add_(delta_coords[1])  # Add to distZ^2, distX^2 and distY^2
+                distance_grid = distance_grid=delta_coords[2].view(volume.shape[1:]) # 62,31,31
+                min_distance = torch.min(distance_grid[torch.eq(full_grid_targets_scan, voxel_type_to_search)])
+                l1_error = sqrt(min_distance)
+                valid_voxel_count += 1
+            l1_errors.append(l1_error)
+
+    return l1_errors, valid_voxel_count
 
 
 def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_file_2d_val):
     test_loss_semantic = []  # To store semantic loss at each iteration
     test_loss_scan = []  # To store scan loss at each iteration
+    test_scan_l1_error = []  # To Store L1 error for scan
     test_loss_2d = []
     model.eval()
     model2d_fixed.eval()
@@ -663,12 +741,15 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
                 confusion_val.add(torch.index_select(predictions, 0, mask_indices_semantic),
                                   torch.index_select(k, 0, mask_indices_semantic))
 
-                # Confusion for Scan completion
+                # Confusion and L1 Error for Scan completion
                 if opt.train_scan_completion:
                     y = output_scan.data
                     # Discard Scan prediction of Unknown Voxels in target_scan
                     y = y.view(y.nelement() // y.size(2), _NUM_OCCUPANCY_STATES)[:, :-1]
                     _, predictions_scan = y.max(1)
+                    # Clone the original volume since center voxels are changed in variable volume
+                    scan_l1_errors, valid_voxel_count = compute_l1_error(volumes[v].data.clone(), targets_scan, predictions_scan)
+                    test_scan_l1_error.append(np.sum(scan_l1_errors)/valid_voxel_count)
                     predictions_scan = predictions_scan.view(-1)
                     k = targets_scan.data.view(-1)
                     confusion_scan_val.add(torch.index_select(predictions_scan, 0, mask_scan_indices),
@@ -680,13 +761,13 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
                        'ValidationSemantic', log_file_semantic_val, num_classes)
     if opt.train_scan_completion:
         evaluate_confusion(confusion_scan_val, test_loss_scan, epoch, iter, took,
-                           'ValidationScan', log_file_scan_val, _NUM_OCCUPANCY_STATES)
+                           'ValidationScan', log_file_scan_val, _NUM_OCCUPANCY_STATES, test_scan_l1_error)
     if opt.use_proxy_loss:
         evaluate_confusion(confusion2d_val, test_loss_2d, epoch, iter, took, 'Validation2d', log_file_2d_val, num_classes)
-    return test_loss_semantic, test_loss_scan, test_loss_2d
+    return test_loss_semantic, test_loss_scan, test_scan_l1_error, test_loss_2d
 
 
-def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_file, _num_classes):
+def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_file, _num_classes, scan_L1_error_metric=None):
     conf = confusion_matrix.value()
     total_correct = 0
     valids = np.zeros(_num_classes, dtype=np.float32)
@@ -696,12 +777,21 @@ def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_fil
         total_correct += conf[c][c]
     instance_acc = -1 if conf.sum() == 0 else float(total_correct) / float(conf.sum())
     avg_acc = -1 if np.all(np.equal(valids, -1)) else np.mean(valids[np.not_equal(valids, -1)])
-    loss_mean = torch.mean(torch.Tensor(loss))
-    log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, loss_mean.item(), avg_acc, instance_acc, time]]) + '\n')
+    loss_mean = torch.mean(torch.Tensor(loss)).item()
+    if scan_L1_error_metric:
+        avg_scan_l1_error_metric = torch.mean(torch.Tensor(scan_L1_error_metric)).item()
+        log_file.write(_SPLITTER.join(
+            [str(f) for f in [epoch, iter, loss_mean, avg_acc,
+                              instance_acc, avg_scan_l1_error_metric, time]]) + '\n')
+        print('Epoch: {}\tIter: {}\tLoss: {:.6f}\tAcc(avg): {:.6f}\tAcc(inst): {:.6f}\tAcc(Avg L1): {:.6f}'
+              '\tTook: {:.2f}\t{}'.format(
+            epoch, iter, loss_mean, avg_acc, instance_acc, avg_scan_l1_error_metric, time, which))
+    else:
+        log_file.write(_SPLITTER.join([str(f) for f in [epoch, iter, loss_mean, avg_acc, instance_acc , time]]) + '\n')
+        print('Epoch: {}\tIter: {}\tLoss: {:.6f}\tAcc(avg): {:.6f}\tAcc(inst): {:.6f}\tTook: {:.2f}\t{}'.format(
+            epoch, iter, loss_mean, avg_acc, instance_acc, time, which))
     log_file.flush()
 
-    print('Epoch: {}\tIter: {}\tLoss: {:.6f}\tAcc(inst): {:.6f}\tAcc(avg): {:.6f}\tTook: {:.2f}\t{}'.format(
-        epoch, iter, loss_mean.data, instance_acc, avg_acc, time, which))
 
 
 def main():
@@ -746,7 +836,9 @@ def main():
         if opt.train_scan_completion:
             log_file_scan_val = open(os.path.join(opt.output, 'log_scan_val.csv'), 'w')
             files_upload_names_list.append('log_scan_val.csv')
-            log_file_scan_val.write(_SPLITTER.join(['epoch', 'iter', 'loss', 'avg acc', 'instance acc', 'time']) + '\n')
+            # 'avg_l1_error' only for scan validation
+            log_file_scan_val.write(_SPLITTER.join(['epoch', 'iter', 'loss', 'avg acc', 'instance acc',
+                                                    'avg_l1_error', 'time']) + '\n')
             log_file_scan_val.flush()
 
         if opt.use_proxy_loss:
@@ -769,6 +861,7 @@ def main():
         train2d_loss = []
         val_semantic_loss = []
         val_scan_loss = []
+        val_scan_l1_metric=[]
         val2d_loss = []
         # Process shuffled train files
         train_file_indices = torch.randperm(len(train_files))
@@ -789,12 +882,13 @@ def main():
             # Validation
             if has_val and k % num_files_per_val == 0:
                 val_index = torch.randperm(len(val_files))[0]
-                loss_semantic, loss_scan, loss2d = \
+                loss_semantic, loss_scan, scan_l1_error, loss2d = \
                     test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_files[val_index], log_file_2d_val)
 
                 val_semantic_loss.extend(loss_semantic)
                 if opt.train_scan_completion:
                     val_scan_loss.extend(loss_scan)
+                    val_scan_l1_metric.extend(scan_l1_error)
                 if loss2d:
                     val2d_loss.extend(loss2d)
 
@@ -807,7 +901,7 @@ def main():
             evaluate_confusion(confusion_val, val_semantic_loss, epoch, iter, -1,
                                'ValidationSemantic', log_file_semantic_val, num_classes)
             if opt.train_scan_completion:
-                evaluate_confusion(confusion_scan_val, val_scan_loss, epoch, iter, -1, 'ValidationScan', log_file_scan_val, _NUM_OCCUPANCY_STATES)
+                evaluate_confusion(confusion_scan_val, val_scan_loss, epoch, iter, -1, 'ValidationScan', log_file_scan_val, _NUM_OCCUPANCY_STATES, val_scan_l1_metric)
             if opt.use_proxy_loss:
                 evaluate_confusion(confusion2d_val, val2d_loss, epoch, iter, -1, 'Validation2d', log_file_2d_val, num_classes)
 
