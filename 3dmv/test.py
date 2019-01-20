@@ -123,6 +123,7 @@ def change_model_keys_name(model_dict: OrderedDict, using_smaller_model):
             new_model_dict[k] = v
     return new_model_dict
 
+
 model_dict = torch.load(opt.model_path, map_location=lambda storage, loc: storage)
 model_dict = change_model_keys_name(model_dict, opt.use_smaller_model)
 model.load_state_dict(model_dict)

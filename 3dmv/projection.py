@@ -126,7 +126,7 @@ class ProjectionHelper():
                               torch.lt(coords[2], voxel_bounds_max[2])
 
         # remove 2d depth mappings
-        if center_voxel_indices_to_skip and center_voxel_indices_to_skip.nelement() > 0:
+        if center_voxel_indices_to_skip is not None and center_voxel_indices_to_skip.nelement() > 0:
             # Setting mask to zero, will discard the corresponding depth pixels below.
 
             # for i in range(self.volume_dims[2]):
