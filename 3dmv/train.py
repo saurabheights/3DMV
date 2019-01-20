@@ -437,9 +437,10 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
 
             # InFrequent logging stops chrome from crash[Colab] and also less strain on jupyter.
             if iter % (64 // batch_size) == 0:
-                print("Semantic: %s, %0.6f" % (msg1, time.time() - iter_start))
+                print("Semantic: %s" % msg1)
                 if opt.train_scan_completion:
                     print("Scan    : %s" % msg2)
+                print("Training Iteration Time: %0.6f" % (time.time() - iter_start))
 
             iter += 1
             if iter % (10000//batch_size) == 0:  # Save more frequently, since its Google Collaboratory.
@@ -608,6 +609,7 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
                 label_images = torch.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
 
             for t,v in enumerate(indices):
+                iter_start = time.time()
                 # print(t, v)
                 if CUDA_AVAILABLE:
                     targets_semantic = labels[v].cuda()
@@ -754,6 +756,10 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
                     k = targets_scan.data.view(-1)
                     confusion_scan_val.add(torch.index_select(predictions_scan, 0, mask_scan_indices),
                                            torch.index_select(k, 0, mask_scan_indices))
+
+                # InFrequent logging stops chrome from crash[Colab] and also less strain on jupyter.
+                if iter % (64 // batch_size) == 0:
+                    print("Validation Iteration Time: %0.6f" % (time.time() - iter_start))
 
     end = time.time()
     took = end - start
