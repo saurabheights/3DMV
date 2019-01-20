@@ -312,7 +312,7 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
                 continue
 
             # 3d Input
-            volume = volumes[v]
+            volume = volumes[v].data.clone()
             # Get indices of voxels to be removed if training scan completion
             random_center_voxel_indices = torch.Tensor()  # Empty Tensor
             if opt.train_scan_completion:
@@ -570,7 +570,7 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
                     continue
 
                 # 3d Input
-                volume = volumes[v]
+                volume = volumes[v].data.clone()
                 # Get indices of voxels to be removed if training scan completion
                 random_center_voxel_indices = torch.Tensor()  # Empty Tensor
                 if opt.train_scan_completion:
