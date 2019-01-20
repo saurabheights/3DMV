@@ -243,13 +243,13 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
         indices = indices[:-1]
 
         if CUDA_AVAILABLE:
-            mask = torch.cuda.LongTensor(batch_size*column_height)
+            mask_semantic = torch.cuda.LongTensor(batch_size*column_height)
             depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
             color_images = torch.cuda.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
             camera_poses = torch.cuda.FloatTensor(batch_size * num_images, 4, 4)
             label_images = torch.cuda.LongTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
         else:
-            mask = torch.LongTensor(batch_size * column_height)
+            mask_semantic = torch.LongTensor(batch_size * column_height)
             depth_images = torch.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
             color_images = torch.FloatTensor(batch_size * num_images, 3, input_image_dims[1], input_image_dims[0])
             camera_poses = torch.FloatTensor(batch_size * num_images, 4, 4)
@@ -272,40 +272,42 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
             if len(mask_semantic_indices.shape) == 0:
                 continue
 
-            # Ignore Invalid targets for scan
+            # Ignore Unknown Voxels for scan
             # occ[0] = np.less_equal(np.abs(sdfs), 1) # occupied space - 1, empty space - 0
             # occ[1] = np.greater_equal(sdfs, -1)     # known space = 1, unknown space - 0
-            # Known-Free Space : 1, 0(2). - Target = 0
-            # Known-Occupied Space : 1, 1 (3) - Target = 1
-            # Unknown Space: 0, 0 - (0) - Target = 2
-            # Create mask from current volume where 1 represents voxel is known-free or known-occupied.
-            # ToDo: Ask tutor: What if I don't use a mask?
+            #                           occ0  occ1
+            # Known-Free Space :           0,    1     (2) - Target = 0
+            # Known-Occupied Space :       1,    1     (3) - Target = 1
+            # Unknown Space:               0,    0     (0) - Target = 2
+            # Create mask_scan from volume where 1 represents voxel is known-free or known-occupied.
             # 0 input should target 0, 1 should 1 and 2(from before voxel discarding) should 2.
             if opt.train_scan_completion:
-                mask_scan = targets_semantic.view(-1).data.clone()
-                mask_scan[:] = 1
                 # Ignore Unknown Voxels from before.
-                mask_scan[targets_semantic.view(-1).eq(opt.num_classes - 1)] = 0
+                occ0 = volumes[v, 0, :, grid_centerX, grid_centerY].data.clone()
+                occ1 = volumes[v, 1, :, grid_centerX, grid_centerY].data.clone()
+                mask_scan = occ1.view(-1)  # Only Occupied Voxels
                 mask_scan_indices = mask_scan.nonzero().squeeze()
                 if len(mask_scan_indices.shape) == 0:
                     continue
 
-                # ToDo: What if you generate targets_scan from volumetric grid?
-                # ToDo: You should get the same result but confirm.
-                # Semantic 0 is Scan 0
-                # Semantic 1-40 is Scan 1
-                # Semantic 41 is Scan 2
-                targets_scan = targets_semantic.view(-1).data.clone()
-                targets_scan[torch.ge(targets_scan, 1) * torch.lt(targets_scan, num_classes-1)] = 1
-                targets_scan[torch.eq(targets_scan, num_classes - 1)] = 2  # Label 41 with class 2
+                # ToDo: Some voxels are semantically labelled even though volumetric grid says they are Known-free.
+                occ0 = occ0.view(-1)
+                occ1 = occ1.view(-1)
+                targets_scan = torch.LongTensor(batch_size * column_height)
+                targets_scan[:] = 2  # Mark all as unknown
+                targets_scan[torch.eq(occ0, 1) * torch.eq(occ1, 1)] = 1
+                targets_scan[torch.eq(occ0, 0) * torch.eq(occ1, 1)] = 0
+                if CUDA_AVAILABLE:
+                    targets_scan = torch.autograd.Variable(targets_scan.cuda())
+                else:
+                    targets_scan = torch.autograd.Variable(targets_scan)
 
             transforms = world_to_grids[v].unsqueeze(1)
             transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4)
             if CUDA_AVAILABLE:
                 transforms = transforms.cuda()
 
-            # Load the data
-            # print("loading the data")
+            # Load the 2d data
             is_load_success = data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images, color_images,
                                                           camera_poses, color_mean, color_std)
             if not is_load_success:
@@ -316,11 +318,12 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
             # Get indices of voxels to be removed if training scan completion
             random_center_voxel_indices = torch.Tensor()  # Empty Tensor
             if opt.train_scan_completion:
+                # Fixing Below Issues will improve training speed
                 # ToDo: For all sample in each batch, same random voxels are removed.
                 # ToDo: Voxel already unknown also gets removed.
                 random_center_voxel_indices = projection.get_random_center_voxels_index(opt.voxel_removal_fraction)
-                # Mark the 3D voxels as Unknown and
-                volume[:, :, random_center_voxel_indices, projection.volume_dims[0] // 2, projection.volume_dims[1] // 2] = 0
+                # Mark the 3D voxels as Unknown. For Unknown Voxels: Input is 0 but Target is 2.
+                volume[:, :, random_center_voxel_indices, grid_centerX, grid_centerY] = 0
 
             # Compute projection mapping and mark center voxels as Unknown if training for scan completion
             proj_mapping = [projection.compute_projection(d, c, t,
@@ -475,6 +478,8 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
     return train_loss_semantic, train_loss_scan, iter, train_loss_2d
 
 
+
+
 def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_file_2d_val):
     test_loss_semantic = []  # To store semantic loss at each iteration
     test_loss_scan = []  # To store scan loss at each iteration
@@ -540,30 +545,42 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
                 if len(mask_indices_semantic.shape) == 0:
                     continue
 
-                # Ignore Invalid targets for scan
-                # Create mask from current volume where 1 represents voxel is known-free or known-occupied.
+                # Ignore Unknown Voxels for scan
+                # occ[0] = np.less_equal(np.abs(sdfs), 1) # occupied space - 1, empty space - 0
+                # occ[1] = np.greater_equal(sdfs, -1)     # known space = 1, unknown space - 0
+                #                           occ0  occ1
+                # Known-Free Space :           0,    1     (2) - Target = 0
+                # Known-Occupied Space :       1,    1     (3) - Target = 1
+                # Unknown Space:               0,    0     (0) - Target = 2
+                # Create mask_scan from volume where 1 represents voxel is known-free or known-occupied.
                 # 0 input should target 0, 1 should 1 and 2(from before voxel discarding) should 2.
                 if opt.train_scan_completion:
-                    mask_scan = targets_semantic.view(-1).data.clone()
-                    mask_scan[:] = 1
                     # Ignore Unknown Voxels from before.
-                    mask_scan[targets_semantic.view(-1).eq(opt.num_classes - 1)] = 0
+                    occ0 = volumes[v, 0, :, grid_centerX, grid_centerY].data.clone()
+                    occ1 = volumes[v, 1, :, grid_centerX, grid_centerY].data.clone()
+                    mask_scan = occ1.view(-1)  # Only Occupied Voxels
                     mask_scan_indices = mask_scan.nonzero().squeeze()
                     if len(mask_scan_indices.shape) == 0:
                         continue
 
-                    # ToDo: What if you generate targets_scan from volumetric grid?
-                    # ToDo: You should get the same result but confirm.
-                    targets_scan = targets_semantic.view(-1).data.clone()
-                    targets_scan[torch.ge(targets_scan, 1) * torch.lt(targets_scan, num_classes - 1)] = 1
-                    targets_scan[torch.eq(targets_scan, num_classes - 1)] = 2  # Label 41 with class 2
+                    # ToDo: Some voxels are semantically labelled even though volumetric grid says they are Known-free.
+                    occ0 = occ0.view(-1)
+                    occ1 = occ1.view(-1)
+                    targets_scan = torch.LongTensor(batch_size*column_height)
+                    targets_scan[:] = 2  # Mark all as unknown
+                    targets_scan[torch.eq(occ0, 1) * torch.eq(occ1, 1)] = 1
+                    targets_scan[torch.eq(occ0, 0) * torch.eq(occ1, 1)] = 0
+                    if CUDA_AVAILABLE:
+                        targets_scan = torch.autograd.Variable(targets_scan.cuda())
+                    else:
+                        targets_scan = torch.autograd.Variable(targets_scan)
 
                 transforms = world_to_grids[v].unsqueeze(1)
                 transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4)
                 if CUDA_AVAILABLE:
                     transforms = transforms.cuda()
 
-                # get 2d data
+                # Load the 2d data
                 is_load_success = data_util.load_frames_multi(opt.data_path_2d, frames[v], depth_images,
                                                               color_images, camera_poses, color_mean, color_std)
                 if not is_load_success:
@@ -574,13 +591,13 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
                 # Get indices of voxels to be removed if training scan completion
                 random_center_voxel_indices = torch.Tensor()  # Empty Tensor
                 if opt.train_scan_completion:
+                    # Fixing Below Issues will improve training speed
                     # ToDo: For all sample in each batch, same random voxels are removed.
                     # ToDo: Voxel already unknown also gets removed.
                     random_center_voxel_indices = projection.get_random_center_voxels_index(
                         opt.voxel_removal_fraction)
-                    # Mark the 3D voxels as Unknown and
-                    volume[:, :, random_center_voxel_indices, projection.volume_dims[0] // 2,
-                    projection.volume_dims[1] // 2] = 0
+                    # Mark the 3D voxels as Unknown. For Unknown Voxels: Input is 0 but Target is 2
+                    volume[:, :, random_center_voxel_indices, grid_centerX, grid_centerY] = 0
 
                 # Compute projection mapping and mark center voxels as Unknown if training for scan completion
                 proj_mapping = [projection.compute_projection(d, c, t, random_center_voxel_indices)
@@ -649,7 +666,7 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
                 # Confusion for Scan completion
                 if opt.train_scan_completion:
                     y = output_scan.data
-                    # Discard semantic prediction of Unknown Voxels in target_scan
+                    # Discard Scan prediction of Unknown Voxels in target_scan
                     y = y.view(y.nelement() // y.size(2), _NUM_OCCUPANCY_STATES)[:, :-1]
                     _, predictions_scan = y.max(1)
                     predictions_scan = predictions_scan.view(-1)
