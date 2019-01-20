@@ -803,10 +803,6 @@ def main():
             evaluate_confusion(confusion_scan, train_scan_loss, epoch, iter, -1, 'TrainScan', log_file_scan, _NUM_OCCUPANCY_STATES)
         if opt.use_proxy_loss:
             evaluate_confusion(confusion2d, train2d_loss, epoch, iter, -1, 'Train2d', log_file_2d, num_classes)
-
-        for file_name in files_upload_names_list:  # Copy log files to google drive
-            shutil.copyfile(os.path.join(opt.output, file_name),
-                            os.path.join(opt.drive, "epoch-%s-%s" % (epoch, file_name)))
         if has_val:
             evaluate_confusion(confusion_val, val_semantic_loss, epoch, iter, -1,
                                'ValidationSemantic', log_file_semantic_val, num_classes)
@@ -832,6 +828,11 @@ def main():
             torch.save(model2d_classifier.state_dict(), os.path.join(opt.output, 'epoch-%s-model2dc.pth' % epoch))
             if opt.drive:
                 torch.save(model2d_classifier.state_dict(), os.path.join(opt.drive, 'epoch-%s-model2dc.pth' % epoch))
+
+        for file_name in files_upload_names_list:  # Copy log files to google drive
+            shutil.copyfile(os.path.join(opt.output, file_name),
+                            os.path.join(opt.drive, "epoch-%s-%s" % (epoch, file_name)))
+
         confusion.reset()
         confusion_val.reset()
         confusion_scan.reset()
