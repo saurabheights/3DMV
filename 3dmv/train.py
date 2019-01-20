@@ -651,9 +651,7 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
                     targets_scan[torch.eq(occ0, 1) * torch.eq(occ1, 1)] = 1
                     targets_scan[torch.eq(occ0, 0) * torch.eq(occ1, 1)] = 0
                     if CUDA_AVAILABLE:
-                        targets_scan = torch.autograd.Variable(targets_scan.cuda())
-                    else:
-                        targets_scan = torch.autograd.Variable(targets_scan)
+                        targets_scan = targets_scan.cuda()
 
                 transforms = world_to_grids[v].unsqueeze(1)
                 transforms = transforms.expand(batch_size, num_images, 4, 4).contiguous().view(-1, 4, 4)
