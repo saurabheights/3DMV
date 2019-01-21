@@ -24,7 +24,7 @@ class Model2d3d(nn.Module):
         self.nf1 = 64
         self.nf2 = 128
         self.bf_semantic = 1024
-        self.bf_scan = 256
+        self.bf_scan = 512
         if use_smaller_model:
             self.nf0 = 32
             self.nf1 = 48
