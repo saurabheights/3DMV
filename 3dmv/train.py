@@ -758,7 +758,7 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
                                            torch.index_select(k, 0, mask_scan_indices))
 
                 # InFrequent logging stops chrome from crash[Colab] and also less strain on jupyter.
-                if iter % (64 // batch_size) == 0:
+                if t % (64 // batch_size) == 0:
                     print("Validation Iteration Time: %0.6f" % (time.time() - iter_start))
 
     end = time.time()
