@@ -41,6 +41,7 @@ parser.add_argument('--retrain', dest='retrain', action='store_true', help='to r
 parser.add_argument('--manualSeed', type=int, default=None, dest='manualSeed', help='Manual Seed for retraining')
 parser.add_argument('--model_3d_path', default='', help='Path of 3d model')
 parser.add_argument('--start_epoch', type=int, default=0, help='start epoch')
+parser.add_argument('--start_iter', type=int, default=0, help='start iter')
 parser.add_argument('--model2d_type', default='scannet', help='which enet (scannet)')
 parser.add_argument('--model2d_path', required=True, help='path to enet model')
 parser.add_argument('--model2d_trainable_path', default='', help='Path of trainable part of 2d model')
@@ -858,7 +859,7 @@ def main():
 
     # Start training
     print('Starting Training...')
-    iter = 0
+    iter = opt.start_iter
     # Note: In 3dmv, validation is done on gap of training on 10 files which is 1/10.
     num_files_per_val = max(round(len(train_files) / 2), 1)
     for epoch in range(opt.start_epoch, opt.start_epoch+opt.max_epoch):
