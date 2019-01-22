@@ -140,13 +140,14 @@ print("Criterion Weights for semantic: \n%s" % criterion_weights_semantic.numpy(
 # Create criterion_weights for Scan Completion
 if opt.train_scan_completion:
     criterion_weights_scan = torch.zeros(3)
-    criterion_weights_scan[0] = 1.0
-    criterion_weights_scan[1] = 10.0
+    criterion_weights_scan[0] = 10.0
+    criterion_weights_scan[1] = 1.0
     criterion_weights_scan[2] = 0
     # Normalize as done for semantic. Keep a good balance between loss of both semantic and scan.
     criterion_weights_scan = criterion_weights_scan / torch.sum(criterion_weights_scan)
     for c in range(3):  # Not Used, What is 1.2 for?
-        criterion_weights_scan[c] = 1 / np.log(1.2 + criterion_weights_scan[c])
+        if criterion_weights_scan[c] > 0:
+            criterion_weights_scan[c] = 1 / np.log(1.2 + criterion_weights_scan[c])
     print("Criterion Weights for scan: \n%s" % criterion_weights_scan.numpy())
 
 if CUDA_AVAILABLE:
