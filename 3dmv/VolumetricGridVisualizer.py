@@ -195,7 +195,7 @@ def create_cylinder_mesh(radius, p0, p1, stacks=10, slices=10):
     return verts, indices
 
 
-def voxel2obj(voxel_grid, output_file, is_semantic_else_scan):
+def voxel2obj(voxel_grid, output_file, is_semantic_else_scan, semantic_grid_for_coloring_scan=None):
     """
     voxel_grid: numpy array (x,y,z), in which instance/label id
     output_file: string
@@ -205,18 +205,19 @@ def voxel2obj(voxel_grid, output_file, is_semantic_else_scan):
     offset = [0, 0, 0]
     verts = []
     indices = []
-    if is_semantic_else_scan:
-        colors = ID_COLOR  # NYU40
-    else:
-        colors = SCAN_ID_COLOR
     for z in range(voxel_grid.shape[2]):
         for y in range(voxel_grid.shape[1]):
             for x in range(voxel_grid.shape[0]):
                 if voxel_grid[x, y, z] > 0:
                     box_min = (np.array([x, y, z]) - 0.05) * scale + offset
                     box_max = (np.array([x, y, z]) + 0.95) * scale + offset
-                    box_verts, box_ind = make_box_mesh(box_min, box_max,
-                                                       np.array(colors[int(voxel_grid[x, y, z] % 41)]))
+                    if is_semantic_else_scan:
+                        box_verts, box_ind = make_box_mesh(box_min, box_max,
+                                                           np.array(ID_COLOR[int(voxel_grid[x, y, z] % 41)]))
+                    else:
+                        box_verts, box_ind = make_box_mesh(box_min, box_max,
+                                                               np.array(ID_COLOR[int(semantic_grid_for_coloring_scan[x, y, z] % 41)]))
+
                     if voxel_grid[x, y, z] > 41:
                         print("Value higher than 41")
                     cur_num_verts = len(verts)
@@ -228,6 +229,7 @@ def voxel2obj(voxel_grid, output_file, is_semantic_else_scan):
 
 if __name__ == '__main__':
     input_dir = opt.input_path
+    os.path.exists(input_dir)
     output_dir = opt.output_path
     if not os.path.exists(opt.output_path):
         os.makedirs(opt.output_path)
@@ -237,7 +239,11 @@ if __name__ == '__main__':
         print('processing %s' % input_file)
         # Treat all non scan files as semantic. Dont check for 'semantic', for backward compatibility with Angela work.
         is_semantic_else_scan = 'scan' not in input_file
+        semantic_grid_for_coloring_scan = None
         labelled_grid_bin = read_tensor_from_file(join(input_dir, input_file))
+        if not is_semantic_else_scan:
+            path = join(input_dir, input_file).replace('scan.bin', 'semantic_AllKnownVoxels.bin')
+            semantic_grid_for_coloring_scan = read_tensor_from_file(path)
         output_file = input_file.replace(".bin", ".obj")
         output_file = join(output_dir, output_file)
-        voxel2obj(labelled_grid_bin, output_file, is_semantic_else_scan)
+        voxel2obj(labelled_grid_bin, output_file, is_semantic_else_scan, semantic_grid_for_coloring_scan)
