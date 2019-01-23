@@ -143,6 +143,8 @@ for c in range(num_classes):
 
 print("Criterion Weights for semantic: \n%s" % criterion_weights_semantic.numpy())
 
+common_log_file = open(os.path.join(opt.output, 'common_log_file.log'), 'w')
+
 # Create criterion_weights for Scan Completion
 if opt.train_scan_completion:
     criterion_weights_scan = torch.zeros(3)
@@ -808,6 +810,17 @@ def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_fil
             epoch, iter, loss_mean, avg_acc, instance_acc, time, which))
     log_file.flush()
 
+    # Plot Confusion Matrix as Image and Log and Print
+    title = which+'_'+str(epoch)+'_' + str(iter)+'_Confusion matrix'
+    image_path = os.path.join(opt.output, title+'.png')
+    confusion_matrix_str = util.plot_confusion_matrix(conf, title=title, image_path=image_path)
+    if 'scan' in which.lower():
+        print(confusion_matrix_str)
+        if opt.drive:  # Copy image to google drive only when Scan. Semantic CM is not properly plotted.
+            shutil.copyfile(image_path,
+                            os.path.join(opt.drive, title+'.png'))
+    common_log_file.write(title + ', '+ confusion_matrix_str)
+
 
     # Write summary
     summary_writer.add_scalar('{}/loss_mean'.format(which), loss_mean, iter)
@@ -827,6 +840,7 @@ def main():
 
     # Log files to upload to google drive as well at the end of each epoch
     files_upload_names_list = list()
+    files_upload_names_list.append('common_log_file.log')
 
     # ToDo: Reduce the below log files code as done for log_file.close at the end.
     log_file_semantic = open(os.path.join(opt.output, 'log_semantic_train.csv'), 'w')
@@ -963,7 +977,7 @@ def main():
         confusion2d_val.reset()
 
     # Close all log files
-    log_files = [log_file_semantic, log_file_semantic_val, log_file_scan, log_file_scan_val, log_file_2d, log_file_2d_val]
+    log_files = [common_log_file, log_file_semantic, log_file_semantic_val, log_file_scan, log_file_scan_val, log_file_2d, log_file_2d_val]
     log_files = list(filter(lambda x: x is not None, log_files))  # Remove None
     list(map(lambda f: f.close(), log_files))
 

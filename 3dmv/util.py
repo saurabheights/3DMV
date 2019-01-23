@@ -1,6 +1,72 @@
 import os, struct, math
+
+import matplotlib
 import numpy as np
 import torch
+
+import itertools
+from matplotlib import pyplot as plt
+
+matplotlib.use('Agg')
+
+semantic_classes = ['Free', 'wall', 'floor', 'cabinet', 'bed', 'chair', 'sofa', 'table', 'door', 'window', 'bookshelf', 'picture', 'counter', 'blinds', 'desk', 'shelves', 'curtain', 'dresser', 'pillow', 'mirror', 'floor mat', 'clothes', 'ceiling', 'books', 'refridgerator', 'television', 'paper', 'towel', 'shower curtain', 'box', 'whiteboard', 'person', 'nightstand', 'toilet', 'sink', 'lamp', 'bathtub', 'bag', 'otherstructure', 'otherfurniture', 'otherprop', 'Ignored']
+
+scan_classes = ['Free', 'Known-Occupied', 'Unknown']
+
+def plot_confusion_matrix(cm,
+                          title='Confusion matrix',
+                          normalize=True,
+                          image_path = None,
+                          cmap=plt.cm.Blues):
+    """
+    This function prints and plots the confusion matrix.
+    Normalization can be applied by setting `normalize=True`.
+    """
+    if normalize:
+        # cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+        cm = cm.astype('float') / cm.sum()
+        print("Normalized " + title)
+    else:
+        print(title + ', without normalization')
+
+    # Plot non-normalized confusion matrix
+    if (cm.shape[0] < 10):
+        plt.figure()
+        plt.imshow(cm, interpolation='nearest', cmap=cmap)
+        plt.title(title)
+        plt.colorbar()
+        if 'scan' in title.lower():
+            classes = scan_classes
+        else:
+            classes = semantic_classes
+        tick_marks = np.arange(len(classes))
+        plt.xticks(tick_marks, classes, rotation=45)
+        plt.yticks(tick_marks, classes)
+
+    fmt = '.2f' if normalize else 'd'
+    thresh = cm.max() / 2.
+    confusion_matrix_str = '['
+    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+        if j == 0:
+            confusion_matrix_str += '\n['
+        confusion_matrix_str += plt.text(j, i, format(cm[i, j], fmt),
+                        horizontalalignment="center",
+                        color="white" if cm[i, j] > thresh else "black")._text
+        if j<=cm.shape[1]-1:
+            confusion_matrix_str+=', '
+        else:
+            confusion_matrix_str += '],'
+
+
+    confusion_matrix_str += ']\n'
+
+    if (cm.shape[0] < 10):  # Too Many classes wont work
+        plt.ylabel('True label')
+        plt.xlabel('Predicted label')
+        plt.tight_layout()
+        plt.savefig(image_path)
+
+    return confusion_matrix_str
 
 
 # util for saving tensors, for debug purposes
