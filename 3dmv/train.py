@@ -251,6 +251,7 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
         # remove last mini-batch so that all the batches have equal size
         indices = indices[:-1]
 
+        # ToDo: Remove below if else using to(device) method.
         if CUDA_AVAILABLE:
             mask_semantic = torch.cuda.LongTensor(batch_size*column_height)
             depth_images = torch.cuda.FloatTensor(batch_size * num_images, proj_image_dims[1], proj_image_dims[0])
@@ -440,11 +441,11 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
             # Log loss for current iteration and print every 20th turn.
             msg1 = _SPLITTER.join([str(f) for f in [epoch, iter, loss_semantic.item()]])
             log_file_semantic.write(msg1 + '\n')
-            summary_writer.add_scalar('metrics/loss_semantic', float(msg1.split(',')[2]), iter)
+            summary_writer.add_scalar('metrics/train_loss_semantic', loss_semantic.item(), iter)
             if opt.train_scan_completion:
                 msg2 = _SPLITTER.join([str(f) for f in [epoch, iter, loss_scan.item()]])
                 log_file_scan.write(msg2 + '\n')
-                summary_writer.add_scalar('metrics/loss_scan', float(msg2.split(',')[2]), iter)
+                summary_writer.add_scalar('metrics/train_loss_scan', loss_scan.item(), iter)
 
             # InFrequent logging stops chrome from crash[Colab] and also less strain on jupyter.
             if iter % (64 // batch_size) == 0:
@@ -465,7 +466,6 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
                                os.path.join(opt.output, 'model-semantic_and_scan-epoch%s-iter%s-sem%s-scan%s.pth'
                                             % (epoch, iter, str(loss_semantic.item()), str(loss_scan.item()))))
                 # Save 2d model
-                # Important ToDo: Do we need to retrain on model2d_trainable
                 torch.save(model2d_trainable.state_dict(),
                            os.path.join(opt.output, 'model2d-iter%s-epoch%s.pth' % (iter, epoch)))
                 if opt.use_proxy_loss:
@@ -810,10 +810,13 @@ def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_fil
 
 
     # Write summary
-    summary_writer.add_scalar('{}/loss_mean'.format(which), loss_mean.data, iter)
+    summary_writer.add_scalar('{}/loss_mean'.format(which), loss_mean, iter)
     summary_writer.add_scalar('{}/instance_acc'.format(which), instance_acc, iter)
     summary_writer.add_scalar('{}/avg_acc'.format(which), avg_acc, iter)
-    summary_writer.add_scalar('{}/time'.format(which), time, iter)
+    # No point of plotting time values. There are not correct for every call.
+    # summary_writer.add_scalar('{}/time'.format(which), time, iter)
+    if scan_L1_error_metric:
+        summary_writer.add_scalar('{}/scan_L1_error_metric'.format(which), scan_L1_error_metric, iter)
 
 
 def main():
@@ -948,6 +951,9 @@ def main():
         for file_name in files_upload_names_list:  # Copy log files to google drive
             shutil.copyfile(os.path.join(opt.output, file_name),
                             os.path.join(opt.drive, "epoch-%s-%s" % (epoch, file_name)))
+        if opt.drive:
+            summary_writer.export_scalars_to_json(os.path.join(opt.drive, "epoch-%s-%s" % (epoch, 'all_scalars.json')))
+
 
         confusion.reset()
         confusion_val.reset()
