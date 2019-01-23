@@ -88,11 +88,18 @@ num_classes = opt.num_classes
 projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, grid_dims, opt.voxel_size)
 model2d_fixed, model2d_trainable, model2d_classifier = create_enet_for_3d(ENET_TYPES[opt.model2d_type],
                                                                           opt.model2d_orig_path, num_classes)
-model2dt_path = opt.model_path.replace('model.pth', 'model2d.pth')
-fixedname = os.path.basename(opt.model_path).split('model.pth')[0] + 'model2dfixed.pth'
-model2dfixed_path = os.path.join(os.path.dirname(opt.model_path), fixedname)
-model2d_fixed.load_state_dict(torch.load(model2dfixed_path))
-model2d_trainable.load_state_dict(torch.load(model2dt_path))
+
+if opt.test_scan_completion:
+    model2dt_path = opt.model_path.replace('-model-semantic_and_scan.pth', '-model2d.pth')
+    # model2d_trainable.load_state_dict(torch.load(model2dt_path, map_location='cpu'))
+    model2d_trainable.load_state_dict(torch.load(model2dt_path))
+else:
+    model2dt_path = opt.model_path.replace('model.pth', 'model2d.pth')
+    fixedname = os.path.basename(opt.model_path).split('model.pth')[0] + 'model2dfixed.pth'
+    model2dfixed_path = os.path.join(os.path.dirname(opt.model_path), fixedname)
+    model2d_fixed.load_state_dict(torch.load(model2dfixed_path))
+    model2d_trainable.load_state_dict(torch.load(model2dt_path))
+
 # if opt.test_2d_model:
 #    model2dc_path = opt.model_path.replace('model.pth', 'model2dc.pth')
 #    model2d_classifier.load_state_dict(torch.load(model2dc_path))
