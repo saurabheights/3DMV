@@ -278,7 +278,7 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
                 if criterion_weights_semantic[k] == 0:
                     mask_semantic[mask_semantic.eq(k)] = 0
             mask_semantic_indices = mask_semantic.nonzero().squeeze()  # Used in confusion matrix
-            if len(mask_semantic_indices.shape) == 0:
+            if mask_semantic_indices.nelement() == 0:
                 continue
 
             # Ignore Unknown Voxels for scan
@@ -296,7 +296,7 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
                 occ1 = volumes[v, 1, :, grid_centerX, grid_centerY].data.clone()
                 mask_scan = occ1.view(-1)  # Only Occupied Voxels
                 mask_scan_indices = mask_scan.nonzero().squeeze()
-                if len(mask_scan_indices.shape) == 0:
+                if mask_scan_indices.nelement() == 0:
                     continue
 
                 # ToDo: Some voxels are semantically labelled even though volumetric grid says they are Known-free.
