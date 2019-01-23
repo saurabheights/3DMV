@@ -227,7 +227,7 @@ def test(scene_name, eval_file):
 
     output_semantic_probs = np.zeros([num_classes, scene_occ_sz[0], scene_occ_sz[1], scene_occ_sz[2]])
     if opt.test_scan_completion:
-        output_scan_probs = np.zeros([num_classes, scene_occ_sz[0], scene_occ_sz[1], scene_occ_sz[2]])
+        output_scan_probs = np.zeros([3, scene_occ_sz[0], scene_occ_sz[1], scene_occ_sz[2]])
 
     # Make sure poses and world_to_grid are Non-Singular
     for k in range(num_images):
