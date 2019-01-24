@@ -142,6 +142,7 @@ def change_model_keys_name(model_dict: OrderedDict, using_smaller_model):
             "classifier.3.weight": "semanticClassifier.3.weight",
             "classifier.3.bias": "semanticClassifier.3.bias",
         }
+
     new_model_dict = OrderedDict()
     for k, v in model_dict.items():
         if k in model_key_mappings.keys():
@@ -152,7 +153,9 @@ def change_model_keys_name(model_dict: OrderedDict, using_smaller_model):
 
 # Load model weights
 if opt.retrain:
-    model.load_state_dict(change_model_keys_name(torch.load(opt.model_3d_path), opt.use_smaller_model))
+    model_dict = model.state_dict()  # Save Current Layer's weights. Make any update using change_model_keys_name
+    model_dict = change_model_keys_name(model_dict, opt.use_smaller_model)
+    model.load_state_dict(model_dict)
     model2d_trainable.load_state_dict(torch.load(opt.model2d_trainable_path))
     print("Loaded models from %s and %s" % (opt.model2d_trainable_path, opt.model_3d_path))
 
