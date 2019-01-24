@@ -829,7 +829,7 @@ def evaluate_confusion(confusion_matrix, loss, epoch, iter, time, which, log_fil
     # No point of plotting time values. There are not correct for every call.
     # summary_writer.add_scalar('{}/time'.format(which), time, iter)
     if scan_L1_error_metric:
-        summary_writer.add_scalar('{}/scan_L1_error_metric'.format(which), scan_L1_error_metric, iter)
+        summary_writer.add_scalar('{}/scan_L1_error_metric'.format(which), avg_scan_l1_error_metric, iter)
 
 
 def main():
