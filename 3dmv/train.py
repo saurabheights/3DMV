@@ -2,6 +2,7 @@ import argparse
 import os
 import random
 import time
+from collections import OrderedDict
 from math import sqrt
 
 import numpy as np
@@ -125,9 +126,33 @@ num_classes = opt.num_classes
 model2d_fixed, model2d_trainable, model2d_classifier = create_enet_for_3d(ENET_TYPES[opt.model2d_type], opt.model2d_path, num_classes)
 model = Model2d3d(num_classes, num_images, intrinsic, proj_image_dims, grid_dims, opt.depth_min, opt.depth_max, opt.voxel_size, opt.use_smaller_model, opt.train_scan_completion)
 
+# Fix Keys due to change in original network by Angela Dai
+def change_model_keys_name(model_dict: OrderedDict, using_smaller_model):
+    if using_smaller_model:
+        model_key_mappings = {
+            "classifier.0.weight": "semanticClassifier.0.weight",
+            "classifier.0.bias": "semanticClassifier.0.bias",
+            "classifier.3.weight": "semanticClassifier.2.weight",  # Smaller Model has no dropout layer
+            "classifier.3.bias": "semanticClassifier.2.bias",
+        }
+    else:
+        model_key_mappings = {
+            "classifier.0.weight": "semanticClassifier.0.weight",
+            "classifier.0.bias": "semanticClassifier.0.bias",
+            "classifier.3.weight": "semanticClassifier.3.weight",
+            "classifier.3.bias": "semanticClassifier.3.bias",
+        }
+    new_model_dict = OrderedDict()
+    for k, v in model_dict.items():
+        if k in model_key_mappings.keys():
+            new_model_dict[model_key_mappings[k]] = v
+        else:
+            new_model_dict[k] = v
+    return new_model_dict
+
 # Load model weights
 if opt.retrain:
-    model.load_state_dict(torch.load(opt.model_3d_path))
+    model.load_state_dict(change_model_keys_name(torch.load(opt.model_3d_path), opt.use_smaller_model))
     model2d_trainable.load_state_dict(torch.load(opt.model2d_trainable_path))
     print("Loaded models from %s and %s" % (opt.model2d_trainable_path, opt.model_3d_path))
 
@@ -966,6 +991,7 @@ def main():
             shutil.copyfile(os.path.join(opt.output, file_name),
                             os.path.join(opt.drive, "epoch-%s-%s" % (epoch, file_name)))
         if opt.drive:
+            # Future Tasks - This doesn't work
             summary_writer.export_scalars_to_json(os.path.join(opt.drive, "epoch-%s-%s" % (epoch, 'all_scalars.json')))
 
 
@@ -982,6 +1008,7 @@ def main():
     list(map(lambda f: f.close(), log_files))
 
     # Export scalar data to JSON
+    # Future Tasks - This doesn't work
     summary_writer.export_scalars_to_json(os.path.join(opt.output, 'all_scalars.json'))
     summary_writer.close()
 
