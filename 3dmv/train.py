@@ -371,7 +371,7 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
                                                           random_center_voxel_indices)
                             for d, c, t in zip(depth_images, camera_poses, transforms)]
             if None in proj_mapping:  # Invalid sample
-                print('No mapping in proj_mapping')
+                # print('No mapping in proj_mapping')
                 continue
             proj_mapping = list(zip(*proj_mapping))
             proj_ind_3d = torch.stack(proj_mapping[0])
@@ -478,11 +478,11 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
                 summary_writer.add_scalar('metrics/train_loss_scan', loss_scan.item(), iter)
 
             # InFrequent logging stops chrome from crash[Colab] and also less strain on jupyter.
-            if iter % (64 // batch_size) == 0:
-                print("Semantic: %s" % msg1)
-                if opt.train_scan_completion:
-                    print("Scan    : %s" % msg2)
-                print("Training Iteration Time: %0.6f" % (time.time() - iter_start))
+            # if iter % (64 // batch_size) == 0:
+            #     # print("Semantic: %s" % msg1)
+            #     if opt.train_scan_completion:
+            #         print("Scan    : %s" % msg2)
+            #     print("Training Iteration Time: %0.6f" % (time.time() - iter_start))
 
             iter += 1
             if iter % (10000//batch_size) == 0:  # Save more frequently, since its Google Collaboratory.
@@ -723,7 +723,7 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
                 proj_mapping = [projection.compute_projection(d, c, t, random_center_voxel_indices)
                                 for d, c, t in zip(depth_images, camera_poses, transforms)]
                 if None in proj_mapping:
-                    print('No mapping in proj_mapping')
+                    # print('No mapping in proj_mapping')
                     continue
                 proj_mapping = list(zip(*proj_mapping))
                 proj_ind_3d = torch.stack(proj_mapping[0])
@@ -798,8 +798,8 @@ def test(epoch, iter, log_file_semantic_val, log_file_scan_val, val_file, log_fi
                                            torch.index_select(k, 0, mask_scan_indices))
 
                 # InFrequent logging stops chrome from crash[Colab] and also less strain on jupyter.
-                if t % (64 // batch_size) == 0:
-                    print("Validation Iteration Time: %0.6f" % (time.time() - iter_start))
+                # if t % (64 // batch_size) == 0:
+                #     print("Validation Iteration Time: %0.6f" % (time.time() - iter_start))
 
     end = time.time()
     took = end - start
