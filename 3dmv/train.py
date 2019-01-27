@@ -52,6 +52,7 @@ parser.add_argument('--use_proxy_loss', dest='use_proxy_loss', action='store_tru
 parser.add_argument('--use_smaller_model', dest='use_smaller_model', action='store_true')
 parser.add_argument('--train_scan_completion', dest='train_scan_completion', action='store_true',
                     help='train scan completion branch')
+parser.add_argument('--disable_semantic', dest='disable_semantic', action='store_true')
 parser.add_argument('--voxel_removal_fraction', dest='voxel_removal_fraction', default=0.5,
                     help='% of voxels to remove from center column')
 
@@ -77,6 +78,8 @@ print(opt)
 if opt.retrain:
     assert opt.model_3d_path and opt.model2d_trainable_path, \
         "No 3d model path and 2d trainable model path is provided, although retrain option is specified."
+
+assert opt.train_scan_completion or not opt.disable_semantic,  "Both Semantic and Scan cannot be disabled."
 
 # specify gpu
 # os.environ['CUDA_VISIBLE_DEVICES']=str(opt.gpu)
@@ -413,7 +416,10 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
                 loss_scan = criterion_scan(output_scan.view(-1, _NUM_OCCUPANCY_STATES),
                                            targets_scan.view(-1))
                 train_loss_scan.append(loss_scan.item())
-                loss = loss_scan + loss_semantic
+                if opt.disable_semantic:
+                    loss = loss_scan
+                else:
+                    loss = loss_scan + loss_semantic
             else:
                 loss = loss_semantic
 
