@@ -179,8 +179,8 @@ common_log_file = open(os.path.join(opt.output, 'common_log_file.log'), 'w')
 # Create criterion_weights for Scan Completion
 if opt.train_scan_completion:
     criterion_weights_scan = torch.zeros(3)
-    criterion_weights_scan[0] = 10.0
-    criterion_weights_scan[1] = 1.0
+    criterion_weights_scan[0] = 23976487
+    criterion_weights_scan[1] = 10456608  # Code in data_util.py for counting voxels
     criterion_weights_scan[2] = 0
     # Normalize as done for semantic. Keep a good balance between loss of both semantic and scan.
     criterion_weights_scan = criterion_weights_scan / torch.sum(criterion_weights_scan)
