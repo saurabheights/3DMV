@@ -156,11 +156,10 @@ def change_model_keys_name(model_dict: OrderedDict, using_smaller_model):
 
 # Load model weights
 if opt.retrain:
-    model_dict = model.state_dict()  # Save Current Layer's weights. Make any update using change_model_keys_name
-    model_dict = change_model_keys_name(model_dict, opt.use_smaller_model)
-    model.load_state_dict(model_dict)
+    # Save Current Layer's weights. Make any update using change_model_keys_name. Angela's models do not have scan layer.
+    print("Loading models from %s and %s" % (opt.model2d_trainable_path, opt.model_3d_path))
+    model.load_state_dict(change_model_keys_name(torch.load(opt.model_3d_path), opt.use_smaller_model), strict=False)
     model2d_trainable.load_state_dict(torch.load(opt.model2d_trainable_path))
-    print("Loaded models from %s and %s" % (opt.model2d_trainable_path, opt.model_3d_path))
 
 projection = ProjectionHelper(intrinsic, opt.depth_min, opt.depth_max, proj_image_dims, grid_dims, opt.voxel_size)
 
