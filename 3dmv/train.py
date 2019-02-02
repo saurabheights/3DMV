@@ -570,9 +570,9 @@ def compute_l1_error(batch_volume, batch_targets_scan, batch_predictions_scan):
         coords[0] = torch.remainder(tmp, grid_dims[0])  # X
         delta_coords = coords.clone()  # Clone since z value will change for each time NN lookup is done for a voxel
         delta_coords[0].sub_(grid_centerX)  # Only Z value changes for each voxel, just compute delta X
-        delta_coords[0].mul_(delta_coords[0]) # Square the distance
+        delta_coords[0] = torch.abs(delta_coords[0]) # Absolute the distance
         delta_coords[1].sub_(grid_centerY)  # Only Z value changes for each voxel, just compute delta Y
-        delta_coords[1].mul_(delta_coords[1]) # Square the distance
+        delta_coords[1] = torch.abs(delta_coords[1]) # Absolute the distance
 
         # Compute L1 Loss for each index
         valid_voxel_count = 0  # This represents voxels where target voxel is Known
@@ -593,11 +593,10 @@ def compute_l1_error(batch_volume, batch_targets_scan, batch_predictions_scan):
             # Do Brute Force NN. Check only where voxels are known.
             if perform_nn_search:
                 delta_coords[2] = coords[2] - z_index
-                delta_coords[2].mul_(delta_coords[2])  # Square the distance
-                delta_coords[2].add_(delta_coords[0]).add_(delta_coords[1])  # Add to distZ^2, distX^2 and distY^2
-                distance_grid = distance_grid=delta_coords[2].view(volume.shape[1:]) # 62,31,31
-                min_distance = torch.min(distance_grid[torch.eq(full_grid_targets_scan, voxel_type_to_search)])
-                l1_error = sqrt(min_distance)
+                delta_coords[2] = torch.abs(delta_coords[2]) # Absolute the distance
+                delta_coords[2].add_(delta_coords[0]).add_(delta_coords[1])  # Add to distZ - distX and distY
+                distance_grid=delta_coords[2].view(volume.shape[1:]) # 62,31,31
+                l1_error = torch.min(distance_grid[torch.eq(full_grid_targets_scan, voxel_type_to_search)])
                 valid_voxel_count += 1
             l1_errors.append(l1_error)
 
