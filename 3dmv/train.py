@@ -55,6 +55,8 @@ parser.add_argument('--train_scan_completion', dest='train_scan_completion', act
 parser.add_argument('--disable_semantic', dest='disable_semantic', action='store_true')
 parser.add_argument('--voxel_removal_fraction', dest='voxel_removal_fraction', default=0.5,
                     help='% of voxels to remove from center column')
+parser.add_argument('--scan_loss_weight', dest='scan_loss_weight', type=float, default=1.0,
+                    help='This reduces semantic loss by factor of scan_loss_weight')
 
 # 2d/3d
 parser.add_argument('--voxel_size', type=float, default=0.05, help='voxel size (in meters)')
@@ -418,7 +420,7 @@ def train(epoch, iter, log_file_semantic, log_file_scan, train_file, log_file_2d
                 if opt.disable_semantic:
                     loss = loss_scan
                 else:
-                    loss = loss_scan + loss_semantic
+                    loss = loss_scan + (loss_semantic/opt.scan_loss_weight)
             else:
                 loss = loss_semantic
 
